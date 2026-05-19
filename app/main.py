@@ -4,18 +4,8 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 
 from app.api.v1 import admin_onboarding, auth, courses, onboarding, users
-from app.db.base import Base
-from app.db.compat import ensure_user_profile_columns
-from app.db.session import engine
 from app.utils.logging_config import setup_logging
-from app.models import User, Course, CourseFile, OnboardingSurvey, OnboardingQuestion, OnboardingOption  # noqa: F401
 from app.utils.response import AppException, ErrorCode, fail, success
-
-# 创建所有数据库表
-Base.metadata.create_all(bind=engine)
-
-# 执行兼容性迁移（补充旧表缺少的列）
-ensure_user_profile_columns(engine)
 
 # 配置日志
 logger = setup_logging()

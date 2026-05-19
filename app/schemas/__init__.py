@@ -12,6 +12,9 @@ from app.schemas.course import CourseCreate, CourseFileResponse, CourseResponse
 from app.schemas.onboarding import (
     AdminOnboardingOption,
     AdminOnboardingQuestion,
+    AgentTrace,
+    AnalysisData,
+    ErrorInfo,
     OnboardingMatrixItem,
     OnboardingOption,
     OnboardingOptionCreateRequest,
@@ -31,6 +34,7 @@ from app.schemas.onboarding import (
     OnboardingSubmitRequest,
     OnboardingSubmitResponse,
     ProfileData,
+    ProfileQueryData,
     QuestionOrderItem,
     QuestionReorderRequest,
 )
@@ -49,6 +53,9 @@ __all__ = [
     "CourseResponse",
     "AdminOnboardingOption",
     "AdminOnboardingQuestion",
+    "AgentTrace",
+    "AnalysisData",
+    "ErrorInfo",
     "OnboardingMatrixItem",
     "OnboardingOption",
     "OnboardingOptionCreateRequest",
@@ -68,6 +75,7 @@ __all__ = [
     "OnboardingSubmitRequest",
     "OnboardingSubmitResponse",
     "ProfileData",
+    "ProfileQueryData",
     "QuestionOrderItem",
     "QuestionReorderRequest",
 ]

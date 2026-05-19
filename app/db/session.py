@@ -22,7 +22,7 @@ DATABASE_URL = (
 # 创建数据库引擎
 engine = create_engine(
     DATABASE_URL,
-    echo=True
+    echo=os.getenv("DB_ECHO", "false").lower() == "true"
 )
 
 # 创建会话工厂

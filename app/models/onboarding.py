@@ -70,3 +70,17 @@ class OnboardingOption(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+class OnboardingSubmission(Base):
+    __tablename__ = "onboarding_submissions"
+
+    id = Column(String(64), primary_key=True, index=True)
+
+    survey_id = Column(String(64), nullable=False, index=True)
+    student_id = Column(String(64), nullable=False, index=True)
+
+    answers_json = Column(JSON, nullable=False)
+
+    generated_profile_id = Column(String(64), nullable=True)
+
+    submitted_at = Column(DateTime, server_default=func.now())

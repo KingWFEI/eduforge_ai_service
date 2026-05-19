@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Optional
 
 from fastapi import status
@@ -6,8 +5,6 @@ from sqlalchemy.orm import Session
 
 from app.constants.role import Role
 from app.models.onboarding import OnboardingOption, OnboardingQuestion, OnboardingSurvey
-from app.models.profile import OnboardingSubmission, StudentProfile
-from app.models.user import User
 from app.schemas.onboarding import (
     AdminOnboardingOption,
     AdminOnboardingQuestion,
@@ -24,7 +21,6 @@ from app.schemas.onboarding import (
     OnboardingSurveyPublishResponse,
     OnboardingSurveyResponse,
     OnboardingSurveyUpdateRequest,
-    ProfileData,
     QuestionReorderRequest,
 )
 from app.utils.response import AppException, ErrorCode
@@ -817,228 +813,109 @@ def get_default_published_student_survey(db: Session) -> Optional[OnboardingSurv
     )
 
 
-# ─── 资源偏好 → 学习偏好中文映射 ────────────────────
+# ─── 问卷校验 ─────────────────────────────────────────
 
-_RESOURCE_PREFERENCE_MAP = {
-    "document": "文档阅读",
-    "mind_map": "图解讲解",
-    "code_case": "代码实操",
-    "quiz": "习题练习",
-    "project_task": "项目实践",
-    "video": "视频学习",
-    "case": "生活案例",
-}
-
-_SKILL_LEVEL_MAP: dict[str, dict[str, str]] = {
-    "python": {"weak": "较弱", "normal": "一般", "good": "较好", "beginner": "入门"},
-    "math": {"weak": "较弱", "normal": "一般", "good": "较好", "beginner": "入门"},
-    "course": {"weak": "较弱", "normal": "一般", "good": "较好", "beginner": "入门"},
-}
-
-_STYLE_MAP = {
-    "图解讲解": "图解型学习者",
-    "生活案例": "案例驱动型",
-    "代码实操": "实践操作型",
-    "习题练习": "巩固练习型",
-    "项目实践": "项目驱动型",
-}
+def get_published_survey_or_404(db: Session, survey_id: str) -> OnboardingSurvey:
+    """按 survey_id 查找已发布的问卷，不存在或未发布则抛出 404"""
+    survey = (
+        db.query(OnboardingSurvey)
+        .filter(
+            OnboardingSurvey.survey_id == survey_id,
+            OnboardingSurvey.status == "published",
+        )
+        .first()
+    )
+    if survey is None:
+        raise AppException(
+            code=ErrorCode.NOT_FOUND,
+            message="问卷不存在或未发布",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return survey
 
 
-# ─── 问卷提交与画像生成 ──────────────────────────────
-
-def _merge_profile_mapping(
-    profile: dict,
-    mapping: dict,
-    resource_prefs: set,
-) -> None:
-    """将选项的 profile_mapping 合并到画像字典中"""
-    if mapping.get("target_course"):
-        profile["target_course"] = mapping["target_course"]
-
-    for goal in mapping.get("learning_goals", []):
-        if goal not in profile["learning_goals"]:
-            profile["learning_goals"].append(goal)
-
-    resource_prefs.update(mapping.get("resource_preference", []))
-
-
-def _build_profile_from_answers(
+def validate_answers_required(
     db: Session,
     survey_id: str,
     answers: dict,
-    student: User,
-) -> dict:
-    """根据问卷答案聚合选项的 profile_mapping，生成画像字典"""
-    profile: dict = {
-        "name": student.nickname or student.username,
-        "major": "",
-        "grade": "",
-        "target_course": "",
-        "learning_goals": [],
-        "coding_level": "",
-        "math_level": "",
-        "course_level": "",
-        "learning_preferences": [],
-        "weaknesses": [],
-        "cognitive_style": [],
-        "time_budget": "",
-        "summary": "",
-        "confidence": 0.70,
-    }
-    resource_prefs: set[str] = set()
+) -> list[dict]:
+    """
+    校验必填题是否已填写。
 
-    for question_id, answer_value in answers.items():
-        question = (
-            db.query(OnboardingQuestion)
-            .filter(
-                OnboardingQuestion.question_id == question_id,
-                OnboardingQuestion.survey_id == survey_id,
-                OnboardingQuestion.is_deleted.is_(False),
-            )
-            .first()
+    返回缺失的题目列表，列表为空表示全部通过。
+    """
+    questions = (
+        db.query(OnboardingQuestion)
+        .filter(
+            OnboardingQuestion.survey_id == survey_id,
+            OnboardingQuestion.is_deleted.is_(False),
+            OnboardingQuestion.required.is_(True),
         )
+        .all()
+    )
+
+    missing = []
+    for q in questions:
+        if q.question_id not in answers or answers[q.question_id] in (None, "", []):
+            missing.append({
+                "question_id": q.question_id,
+                "title": q.title,
+            })
+    return missing
+
+
+def validate_answers_format(
+    db: Session,
+    survey_id: str,
+    answers: dict,
+) -> list[dict]:
+    """
+    校验答案格式是否匹配题目类型。
+
+    返回格式错误列表，列表为空表示全部通过。
+    """
+    questions = {
+        q.question_id: q
+        for q in db.query(OnboardingQuestion)
+        .filter(
+            OnboardingQuestion.survey_id == survey_id,
+            OnboardingQuestion.is_deleted.is_(False),
+        )
+        .all()
+    }
+
+    errors = []
+    for qid, value in answers.items():
+        question = questions.get(qid)
         if not question:
             continue
 
-        if question.type == "single" and isinstance(answer_value, str):
-            option = (
-                db.query(OnboardingOption)
-                .filter(
-                    OnboardingOption.question_id == question_id,
-                    OnboardingOption.value == answer_value,
-                    OnboardingOption.is_deleted.is_(False),
-                )
-                .first()
-            )
-            if option and option.profile_mapping:
-                _merge_profile_mapping(profile, option.profile_mapping, resource_prefs)
+        if question.type == "single" and not isinstance(value, str):
+            errors.append({
+                "question_id": qid,
+                "message": "该题为单选题，答案必须是字符串",
+            })
+        elif question.type == "multi" and not isinstance(value, list):
+            errors.append({
+                "question_id": qid,
+                "message": "该题为多选题，答案必须是数组",
+            })
+        elif question.type == "skill_matrix" and not isinstance(value, dict):
+            errors.append({
+                "question_id": qid,
+                "message": "该题为技能矩阵题，答案必须是对象",
+            })
+        elif question.type == "text" and not isinstance(value, str):
+            errors.append({
+                "question_id": qid,
+                "message": "该题为文本题，答案必须是字符串",
+            })
+        elif question.type == "scale" and not isinstance(value, (int, float)):
+            errors.append({
+                "question_id": qid,
+                "message": "该题为评分题，答案必须是数字",
+            })
 
-        elif question.type == "multi" and isinstance(answer_value, list):
-            options = (
-                db.query(OnboardingOption)
-                .filter(
-                    OnboardingOption.question_id == question_id,
-                    OnboardingOption.value.in_(answer_value),
-                    OnboardingOption.is_deleted.is_(False),
-                )
-                .all()
-            )
-            for option in options:
-                if option.profile_mapping:
-                    _merge_profile_mapping(profile, option.profile_mapping, resource_prefs)
-
-        elif question.type == "skill_matrix" and isinstance(answer_value, dict):
-            for key, level in answer_value.items():
-                level_map = _SKILL_LEVEL_MAP.get(key, {})
-                display = level_map.get(str(level), str(level))
-                if key == "python":
-                    profile["coding_level"] = display
-                elif key == "math":
-                    profile["math_level"] = display
-                elif key == "course":
-                    profile["course_level"] = display
-
-    # resource_preference → learning_preferences 中文映射
-    seen: set[str] = set()
-    for r in resource_prefs:
-        cn = _RESOURCE_PREFERENCE_MAP.get(r, r)
-        if cn not in seen:
-            profile["learning_preferences"].append(cn)
-            seen.add(cn)
-
-    # 根据 learning_preferences 推导 cognitive_style
-    styles: set[str] = set()
-    for pref in profile["learning_preferences"]:
-        if pref in _STYLE_MAP:
-            styles.add(_STYLE_MAP[pref])
-    profile["cognitive_style"] = sorted(styles)
-
-    # 生成默认 summary（不调用智能体）
-    profile["summary"] = _generate_default_summary(profile)
-
-    return profile
+    return errors
 
 
-def _generate_default_summary(profile: dict) -> str:
-    """在不调用画像智能体的情况下生成基础总结"""
-    parts = []
-    if profile.get("target_course"):
-        parts.append(f"你对「{profile['target_course']}」方向感兴趣")
-    if profile.get("learning_goals"):
-        goals = "、".join(profile["learning_goals"])
-        parts.append(f"学习目标包括{goals}")
-    if profile.get("learning_preferences"):
-        prefs = "、".join(profile["learning_preferences"][:3])
-        parts.append(f"偏好{prefs}等学习方式")
-    if parts:
-        return "，".join(parts) + "。系统将持续根据你的学习行为优化画像。"
-    return "请完成问卷以获得个性化学习推荐。"
-
-
-def submit_survey(
-    db: Session,
-    survey_id: str,
-    answers: dict,
-    student: User,
-) -> tuple[OnboardingSubmission, StudentProfile, ProfileData]:
-    """提交问卷答案，生成／更新学生学习画像"""
-    survey = get_survey_or_404(db, survey_id)
-    if survey.status != "published":
-        raise AppException(
-            code=ErrorCode.CONFLICT,
-            message="当前问卷未发布，无法提交",
-            status_code=status.HTTP_409_CONFLICT,
-        )
-
-    # 1. 保存提交记录
-    submission_id = next_code(db, OnboardingSubmission, "submission_id", "sub")
-    submission = OnboardingSubmission(
-        submission_id=submission_id,
-        survey_id=survey_id,
-        student_id=student.username,
-        answers=answers,
-    )
-    db.add(submission)
-    db.flush()
-
-    # 2. 从答案生成画像数据
-    raw = _build_profile_from_answers(db, survey_id, answers, student)
-
-    # 3. 创建或更新学生画像
-    profile = db.query(StudentProfile).filter(StudentProfile.student_id == student.username).first()
-    if profile:
-        for key, value in raw.items():
-            setattr(profile, key, value)
-        profile.last_updated = datetime.now()
-    else:
-        raw["profile_id"] = next_code(db, StudentProfile, "profile_id", "profile")
-        raw["student_id"] = student.username
-        profile = StudentProfile(**raw)
-        db.add(profile)
-
-    db.commit()
-    db.refresh(profile)
-
-    # 4. 递增问卷提交计数
-    survey.submit_count = OnboardingSurvey.submit_count + 1
-    db.commit()
-
-    return submission, profile, ProfileData(
-        profile_id=profile.profile_id,
-        student_id=profile.student_id,
-        name=profile.name,
-        major=profile.major or "",
-        grade=profile.grade or "",
-        target_course=profile.target_course or "",
-        learning_goals=profile.learning_goals or [],
-        coding_level=profile.coding_level or "",
-        math_level=profile.math_level or "",
-        course_level=profile.course_level or "",
-        learning_preferences=profile.learning_preferences or [],
-        weaknesses=profile.weaknesses or [],
-        cognitive_style=profile.cognitive_style or [],
-        time_budget=profile.time_budget or "",
-        summary=profile.summary or "",
-        confidence=profile.confidence or 0.0,
-        last_updated=profile.last_updated,
-    )

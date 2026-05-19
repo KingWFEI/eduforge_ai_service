@@ -195,7 +195,7 @@ class QuestionReorderRequest(BaseModel):
     question_orders: list[QuestionOrderItem]
 
 
-# ─── 问卷提交与画像 ───────────────────────────────────
+# ─── 问卷提交 ─────────────────────────────────────────
 
 class OnboardingSubmitRequest(BaseModel):
     """提交问卷请求"""
@@ -203,11 +203,21 @@ class OnboardingSubmitRequest(BaseModel):
     answers: dict[str, Any]
 
 
+class OnboardingSubmitResponse(BaseModel):
+    """提交问卷响应（异步任务模式，不直接返回画像）"""
+    submission_id: str
+    analysis_id: str
+    status: str = "processing"
+    next_action: str = "poll_profile_result"
+
+
+# ─── 画像查询 ─────────────────────────────────────────
+
 class ProfileData(BaseModel):
     """学生学习画像数据"""
     profile_id: str
     student_id: str
-    name: str
+    name: str = ""
     major: str = ""
     grade: str = ""
     target_course: str = ""
@@ -224,7 +234,38 @@ class ProfileData(BaseModel):
     last_updated: datetime
 
 
-class OnboardingSubmitResponse(BaseModel):
-    """提交问卷响应"""
+class AnalysisData(BaseModel):
+    """画像分析数据"""
+    analysis_text: Optional[str] = None
+    learning_suggestion: Optional[str] = None
+    resource_strategy: Any = None
+    weakness_analysis: Any = None
+
+
+class AgentTrace(BaseModel):
+    """智能体/技能/大模型调用记录"""
+    agent_used: Optional[str] = None
+    skill_used: Optional[bool] = None
+    skill_name: Optional[str] = None
+    llm_used: Optional[bool] = None
+    llm_provider: Optional[str] = None
+    llm_error: Optional[str] = None
+
+
+class ErrorInfo(BaseModel):
+    """分析失败错误信息"""
+    error_code: str
+    error_message: str
+
+
+class ProfileQueryData(BaseModel):
+    """画像查询响应数据"""
     submission_id: str
-    profile: ProfileData
+    analysis_id: str
+    status: str
+    progress: int
+    current_step: Optional[str] = None
+    agent_trace: Optional[AgentTrace] = None
+    profile: Optional[ProfileData] = None
+    analysis: Optional[AnalysisData] = None
+    error: Optional[ErrorInfo] = None
