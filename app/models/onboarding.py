@@ -6,47 +6,40 @@ from app.db.base import Base
 
 
 class OnboardingSurvey(Base):
-    """引导问卷表"""
+    """引导问卷主体表"""
     __tablename__ = "onboarding_surveys"
 
     id = Column(Integer, primary_key=True, index=True)
-    survey_id = Column(String(50), unique=True, index=True, nullable=False)
+    survey_id = Column(String(64), unique=True, index=True, nullable=False)
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
     version = Column(Integer, default=1, nullable=False)
     status = Column(String(30), default="draft", index=True, nullable=False)
     target_role = Column(String(30), default=Role.STUDENT.value, index=True, nullable=False)
-    target_course_id = Column(String(100), nullable=True)
+    target_course_id = Column(String(64), nullable=True)
     submit_count = Column(Integer, default=0, nullable=False)
+    is_default = Column(Boolean, default=False, nullable=False)
     created_by = Column(String(100), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class OnboardingQuestion(Base):
-    """问卷题目表"""
+    """问卷问题表"""
     __tablename__ = "onboarding_questions"
 
     id = Column(Integer, primary_key=True, index=True)
-    question_id = Column(String(50), unique=True, index=True, nullable=False)
-    survey_id = Column(String(50), ForeignKey("onboarding_surveys.survey_id"), index=True, nullable=False)
+    question_id = Column(String(64), unique=True, index=True, nullable=False)
+    survey_id = Column(String(64), ForeignKey("onboarding_surveys.survey_id"), index=True, nullable=False)
     step = Column(Integer, nullable=False)
     title = Column(String(300), nullable=False)
     subtitle = Column(String(500), nullable=True)
     type = Column(String(30), nullable=False)
     required = Column(Boolean, default=True, nullable=False)
-    matrix_items = Column(JSON, nullable=True)
+    config_json = Column(JSON, nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class OnboardingOption(Base):
@@ -54,33 +47,39 @@ class OnboardingOption(Base):
     __tablename__ = "onboarding_options"
 
     id = Column(Integer, primary_key=True, index=True)
-    option_id = Column(String(50), unique=True, index=True, nullable=False)
-    question_id = Column(String(50), ForeignKey("onboarding_questions.question_id"), index=True, nullable=False)
+    option_id = Column(String(64), unique=True, index=True, nullable=False)
+    question_id = Column(String(64), ForeignKey("onboarding_questions.question_id"), index=True, nullable=False)
     label = Column(String(200), nullable=False)
     value = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
     sort_order = Column(Integer, default=0, nullable=False)
     icon = Column(String(100), nullable=True)
     color = Column(String(50), nullable=True)
-    profile_mapping = Column(JSON, nullable=True)
+    profile_mapping_json = Column(JSON, nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 
 class OnboardingSubmission(Base):
+    """问卷提交记录"""
     __tablename__ = "onboarding_submissions"
 
     id = Column(String(64), primary_key=True, index=True)
-
-    survey_id = Column(String(64), nullable=False, index=True)
-    student_id = Column(String(64), nullable=False, index=True)
-
-    answers_json = Column(JSON, nullable=False)
-
+    survey_id = Column(String(64), index=True, nullable=False)
+    student_id = Column(String(64), index=True, nullable=False)
+    answers_json = Column(JSON, nullable=True)
     generated_profile_id = Column(String(64), nullable=True)
+    status = Column(String(30), default="submitted", index=True)
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    submitted_at = Column(DateTime, server_default=func.now())
+
+class OnboardingAnswer(Base):
+    """问卷答案明细表"""
+    __tablename__ = "onboarding_answers"
+
+    id = Column(String(64), primary_key=True, index=True)
+    submission_id = Column(String(64), ForeignKey("onboarding_submissions.id"), index=True, nullable=False)
+    question_id = Column(String(64), ForeignKey("onboarding_questions.question_id"), index=True, nullable=False)
+    answer_json = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

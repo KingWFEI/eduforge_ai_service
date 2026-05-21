@@ -30,7 +30,7 @@ class UserCreate(BaseModel):
     """创建用户（管理员用）"""
     username: str = Field(..., min_length=1)
     password: str = Field(..., min_length=6)
-    nickname: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
     email: Optional[str] = None
     role: Role = Role.STUDENT
 

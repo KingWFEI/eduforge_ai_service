@@ -11,7 +11,7 @@ def user_to_response(user: User) -> dict:
     return {
         "user_id": format_user_id(user.id),
         "username": user.username,
-        "name": user.nickname or user.username,
+        "name": user.name or user.username,
         "phone": user.phone or "",
         "role": user.role,
         "avatar_url": user.avatar_url or "",
