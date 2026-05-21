@@ -4,6 +4,7 @@ from app.models.course import Course, CourseFile
 from app.models.onboarding import OnboardingSurvey, OnboardingQuestion, OnboardingOption, OnboardingSubmission
 from app.models.student_profile import StudentProfile
 from app.models.profile_analysis import ProfileAnalysis
+from app.models.verification_code import VerificationCode
 
 __all__ = [
     "User",
@@ -15,4 +16,5 @@ __all__ = [
     "OnboardingSubmission",
     "StudentProfile",
     "ProfileAnalysis",
+    "VerificationCode",
 ]
