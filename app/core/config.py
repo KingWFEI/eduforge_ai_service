@@ -22,5 +22,8 @@ class Settings:
     LOG_DIR: str = "logs"
     LOG_FILE: str = os.path.join(LOG_DIR, "server.log")
 
+    # 验证码配置
+    SMS_CODE_EXPIRE_MINUTES: int = int(os.getenv("SMS_CODE_EXPIRE_MINUTES", "5"))
+
 
 settings = Settings()

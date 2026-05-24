@@ -57,6 +57,31 @@ def get_current_user(
     return user
 
 
+def get_current_admin(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """仅允许管理员访问：校验 is_active、status、role"""
+    if not current_user.is_active:
+        raise AppException(
+            code=ErrorCode.FORBIDDEN,
+            message="当前账号已被禁用",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    if current_user.status != "normal":
+        raise AppException(
+            code=ErrorCode.FORBIDDEN,
+            message="当前账号状态异常",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    if current_user.role != Role.ADMIN.value:
+        raise AppException(
+            code=ErrorCode.FORBIDDEN,
+            message="无权限操作，仅管理员可以访问",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    return current_user
+
+
 def require_role(*roles: Role):
     """
     角色权限验证依赖：要求当前用户拥有指定角色之一。

@@ -21,14 +21,11 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """迁移至新模型 schema。
 
-    仅处理 3 张变更的表，其余表保持不变。
-    - onboarding_submissions：旧表（int PK）→ 新表（string PK，列更名）
-    - student_profiles：旧表（int PK）→ 新表（string PK，列更名 + 新增字段）
-    - profile_analyses：全新表
+    创建全部 9 张表。
     """
 
     # --- onboarding_submissions（旧表结构差异过大，DROP + CREATE）---
-    op.drop_table('onboarding_submissions')
+    op.execute('DROP TABLE IF EXISTS onboarding_submissions')
     op.create_table('onboarding_submissions',
         sa.Column('id', sa.String(length=64), nullable=False),
         sa.Column('survey_id', sa.String(length=64), nullable=False),
@@ -43,7 +40,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_onboarding_submissions_student_id'), 'onboarding_submissions', ['student_id'], unique=False)
 
     # --- student_profiles（旧表结构差异过大，DROP + CREATE）---
-    op.drop_table('student_profiles')
+    op.execute('DROP TABLE IF EXISTS student_profiles')
     op.create_table('student_profiles',
         sa.Column('id', sa.String(length=64), nullable=False),
         sa.Column('student_id', sa.String(length=64), nullable=False),
@@ -68,6 +65,107 @@ def upgrade() -> None:
     op.create_index(op.f('ix_student_profiles_id'), 'student_profiles', ['id'], unique=False)
     op.create_index(op.f('ix_student_profiles_student_id'), 'student_profiles', ['student_id'], unique=False)
 
+    # --- users ---
+    op.create_table('users',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('username', sa.String(length=100), nullable=False),
+        sa.Column('password_hash', sa.String(length=255), nullable=False),
+        sa.Column('email', sa.String(length=100), nullable=True),
+        sa.Column('nickname', sa.String(length=100), nullable=True),
+        sa.Column('avatar_url', sa.String(length=500), server_default=''),
+        sa.Column('role', sa.String(length=30), server_default='student'),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
+    op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
+    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
+
+    # --- courses ---
+    op.create_table('courses',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('name', sa.String(length=100), nullable=False),
+        sa.Column('description', sa.Text(), nullable=True),
+        sa.Column('created_by', sa.Integer(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index(op.f('ix_courses_id'), 'courses', ['id'], unique=False)
+
+    # --- course_files ---
+    op.create_table('course_files',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('course_id', sa.Integer(), nullable=False),
+        sa.Column('filename', sa.String(length=255), nullable=False),
+        sa.Column('file_path', sa.String(length=500), nullable=False),
+        sa.Column('file_type', sa.String(length=50), nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index(op.f('ix_course_files_id'), 'course_files', ['id'], unique=False)
+
+    # --- onboarding_surveys ---
+    op.create_table('onboarding_surveys',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('survey_id', sa.String(length=50), nullable=False),
+        sa.Column('title', sa.String(length=200), nullable=False),
+        sa.Column('description', sa.Text(), nullable=True),
+        sa.Column('version', sa.Integer(), server_default=sa.text('1'), nullable=False),
+        sa.Column('status', sa.String(length=30), server_default='draft', nullable=False),
+        sa.Column('target_role', sa.String(length=30), server_default='student', nullable=False),
+        sa.Column('target_course_id', sa.String(length=100), nullable=True),
+        sa.Column('submit_count', sa.Integer(), server_default=sa.text('0'), nullable=False),
+        sa.Column('created_by', sa.String(length=100), nullable=False),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index(op.f('ix_onboarding_surveys_id'), 'onboarding_surveys', ['id'], unique=False)
+    op.create_index(op.f('ix_onboarding_surveys_survey_id'), 'onboarding_surveys', ['survey_id'], unique=True)
+    op.create_index(op.f('ix_onboarding_surveys_status'), 'onboarding_surveys', ['status'], unique=False)
+    op.create_index(op.f('ix_onboarding_surveys_target_role'), 'onboarding_surveys', ['target_role'], unique=False)
+
+    # --- onboarding_questions ---
+    op.create_table('onboarding_questions',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('question_id', sa.String(length=50), nullable=False),
+        sa.Column('survey_id', sa.String(length=50), nullable=False),
+        sa.Column('step', sa.Integer(), nullable=False),
+        sa.Column('title', sa.String(length=300), nullable=False),
+        sa.Column('subtitle', sa.String(length=500), nullable=True),
+        sa.Column('type', sa.String(length=30), nullable=False),
+        sa.Column('required', sa.Boolean(), server_default=sa.text('1'), nullable=False),
+        sa.Column('matrix_items', sa.JSON(), nullable=True),
+        sa.Column('is_deleted', sa.Boolean(), server_default=sa.text('0'), nullable=False),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index(op.f('ix_onboarding_questions_id'), 'onboarding_questions', ['id'], unique=False)
+    op.create_index(op.f('ix_onboarding_questions_question_id'), 'onboarding_questions', ['question_id'], unique=True)
+    op.create_index(op.f('ix_onboarding_questions_survey_id'), 'onboarding_questions', ['survey_id'], unique=False)
+
+    # --- onboarding_options ---
+    op.create_table('onboarding_options',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('option_id', sa.String(length=50), nullable=False),
+        sa.Column('question_id', sa.String(length=50), nullable=False),
+        sa.Column('label', sa.String(length=200), nullable=False),
+        sa.Column('value', sa.String(length=100), nullable=False),
+        sa.Column('description', sa.Text(), nullable=True),
+        sa.Column('sort_order', sa.Integer(), server_default=sa.text('0'), nullable=False),
+        sa.Column('icon', sa.String(length=100), nullable=True),
+        sa.Column('color', sa.String(length=50), nullable=True),
+        sa.Column('profile_mapping', sa.JSON(), nullable=True),
+        sa.Column('is_deleted', sa.Boolean(), server_default=sa.text('0'), nullable=False),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index(op.f('ix_onboarding_options_id'), 'onboarding_options', ['id'], unique=False)
+    op.create_index(op.f('ix_onboarding_options_option_id'), 'onboarding_options', ['option_id'], unique=True)
+    op.create_index(op.f('ix_onboarding_options_question_id'), 'onboarding_options', ['question_id'], unique=False)
+
     # --- profile_analyses（全新表）---
     op.create_table('profile_analyses',
         sa.Column('id', sa.String(length=64), nullable=False),
@@ -91,6 +189,13 @@ def upgrade() -> None:
 def downgrade() -> None:
     """回退至旧 schema。"""
     op.drop_table('profile_analyses')
+
+    op.drop_table('onboarding_options')
+    op.drop_table('onboarding_questions')
+    op.drop_table('onboarding_surveys')
+    op.drop_table('course_files')
+    op.drop_table('courses')
+    op.drop_table('users')
 
     op.drop_table('student_profiles')
     op.create_table('student_profiles',

@@ -42,7 +42,7 @@ def create_user(
         username=user.username,
         password_hash=hash_password(user.password),
         email=user.email,
-        nickname=user.nickname,
+        name=user.name,
         role=user.role.value,
         avatar_url="",
     )

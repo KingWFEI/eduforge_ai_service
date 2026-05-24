@@ -11,8 +11,12 @@ def user_to_response(user: User) -> dict:
     return {
         "user_id": format_user_id(user.id),
         "username": user.username,
-        "nickname": user.nickname or user.username,
+        "name": user.name or user.username,
+        "phone": user.phone or "",
+        "email": user.email or "",
         "role": user.role,
+        "status": user.status or "normal",
+        "is_active": user.is_active if user.is_active is not None else True,
         "avatar_url": user.avatar_url or "",
         "created_at": user.created_at,
     }
