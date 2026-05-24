@@ -3,7 +3,7 @@ import time
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 
-from app.api.v1 import admin_onboarding, admin_users, auth, courses, onboarding, users
+from app.api.v1 import admin_onboarding, admin_users, auth, courses, onboarding, users, home, learning_path, profile, resources
 from app.utils.logging_config import setup_logging
 from app.utils.response import AppException, ErrorCode, fail, success
 
@@ -109,6 +109,11 @@ def root():
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(courses.router, prefix="/api")
+app.include_router(home.router, prefix="/api")
 app.include_router(onboarding.router, prefix="/api")
 app.include_router(admin_onboarding.router, prefix="/api")
 app.include_router(admin_users.router, prefix="/api")
+
+app.include_router(profile.router, prefix="/api")
+app.include_router(learning_path.router, prefix="/api")
+app.include_router(resources.router, prefix="/api")
