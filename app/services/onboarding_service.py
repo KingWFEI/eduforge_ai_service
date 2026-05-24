@@ -155,7 +155,7 @@ def seed_default_survey(db: Session) -> None:
             subtitle=question_data.get("subtitle", ""),
             type=question_data["type"],
             required=question_data.get("required", True),
-            matrix_items=question_data.get("matrix_items", []),
+            config_json=question_data.get("matrix_items", []),
         )
         db.add(question)
         db.flush()
@@ -171,7 +171,7 @@ def seed_default_survey(db: Session) -> None:
                     sort_order=option_data.get("sort_order", 0),
                     icon=option_data.get("icon"),
                     color=option_data.get("color"),
-                    profile_mapping=option_data.get("profile_mapping", {}),
+                    profile_mapping_json=option_data.get("profile_mapping", {}),
                 )
             )
 
@@ -255,7 +255,7 @@ def option_to_admin_response(option: OnboardingOption) -> AdminOnboardingOption:
         sort_order=option.sort_order,
         icon=option.icon,
         color=option.color,
-        profile_mapping=option.profile_mapping or {},
+        profile_mapping=option.profile_mapping_json or {},
     )
 
 
@@ -278,7 +278,7 @@ def question_to_admin_response(db: Session, question: OnboardingQuestion) -> Adm
         type=question.type,
         required=question.required,
         options=[option_to_admin_response(option) for option in options],
-        matrix_items=question.matrix_items or [],
+        matrix_items=question.config_json or [],
     )
 
 
@@ -463,7 +463,7 @@ def validate_survey_for_publish(db: Session, survey: OnboardingSurvey) -> None:
                     message="单选、多选或量表题必须配置选项",
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
-        if question.type == "skill_matrix" and not question.matrix_items:
+        if question.type == "skill_matrix" and not question.config_json:
             raise AppException(
                 code=ErrorCode.PARAM_ERROR,
                 message="技能矩阵题必须配置矩阵项",
@@ -556,7 +556,7 @@ def duplicate_survey(db: Session, survey_id: str, created_by: str) -> Onboarding
                 subtitle=question.subtitle,
                 type=question.type,
                 required=question.required,
-                matrix_items=question.matrix_items,
+                config_json=question.config_json,
             )
         )
         db.flush()
@@ -580,7 +580,7 @@ def duplicate_survey(db: Session, survey_id: str, created_by: str) -> Onboarding
                     sort_order=option.sort_order,
                     icon=option.icon,
                     color=option.color,
-                    profile_mapping=option.profile_mapping,
+                    profile_mapping_json=option.profile_mapping_json,
                 )
             )
             db.flush()
@@ -624,7 +624,7 @@ def create_question(
         subtitle=payload.subtitle,
         type=payload.type,
         required=payload.required,
-        matrix_items=[item.model_dump() for item in payload.matrix_items],
+        config_json=[item.model_dump() for item in payload.matrix_items] if payload.matrix_items else None,
     )
     db.add(question)
     db.flush()
@@ -645,10 +645,11 @@ def update_question(
     question = get_question_or_404(db, question_id)
     update_data = payload.model_dump(exclude_unset=True)
     if "matrix_items" in update_data and update_data["matrix_items"] is not None:
-        update_data["matrix_items"] = [
+        update_data["config_json"] = [
             item.model_dump() if hasattr(item, "model_dump") else item
             for item in payload.matrix_items
         ]
+    del update_data["matrix_items"]
     for key, value in update_data.items():
         setattr(question, key, value)
     db.commit()
@@ -709,7 +710,7 @@ def create_option_model(
         sort_order=payload.sort_order,
         icon=payload.icon,
         color=payload.color,
-        profile_mapping=payload.profile_mapping,
+        profile_mapping_json=payload.profile_mapping,
     )
     db.add(option)
     db.flush()

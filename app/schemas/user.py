@@ -36,8 +36,8 @@ class UserCreate(BaseModel):
 
 
 class AdminUserCreate(UserCreate):
-    """管理员创建用户（显式声明 role）"""
-    pass
+    """管理员创建用户（显式声明 role，可选 phone）"""
+    phone: Optional[str] = Field(default=None, pattern=r"^1\d{10}$", description="手机号")
 
 
 class UserRoleUpdate(BaseModel):
@@ -51,7 +51,10 @@ class UserResponse(BaseModel):
     username: str
     name: str
     phone: Optional[str] = None
+    email: Optional[str] = None
     role: Role
+    status: str = "normal"
+    is_active: bool = True
     avatar_url: str = ""
     created_at: Optional[datetime] = None
 

@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from app.constants.role import Role
 from app.core.dependencies import get_current_user, require_role
 from app.db.session import get_db
-from app.models.course import Course, CourseFile
+from app.models.course import Course
+from app.models.course_structure import CourseDocument
 from app.models.user import User
 from app.schemas.course import CourseCreate, CourseFileResponse, CourseResponse
 from app.schemas.common import PageResponse
@@ -23,6 +24,7 @@ def create_course(
 ):
     """创建课程（教师/管理员权限）"""
     new_course = Course(
+        course_id=course.course_id,
         name=course.name,
         description=course.description,
         created_by=current_user.id,
@@ -78,13 +80,13 @@ def get_course(
 
 @router.post("/{course_id}/upload", response_model=ApiResponse[CourseFileResponse])
 async def upload_course_file(
-    course_id: int,
+    course_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
 ):
     """上传课程文件（教师/管理员权限，支持 PDF/Word/Markdown/TXT）"""
-    course = db.query(Course).filter(Course.id == course_id).first()
+    course = db.query(Course).filter(Course.course_id == course_id).first()
 
     if course is None:
         raise AppException(
@@ -114,7 +116,7 @@ async def upload_course_file(
         content = await file.read()
         f.write(content)
 
-    new_file = CourseFile(
+    new_file = CourseDocument(
         course_id=course_id,
         filename=filename,
         file_path=save_path,
