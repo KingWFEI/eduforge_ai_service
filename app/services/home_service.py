@@ -73,16 +73,16 @@ def _json_list(value: Any) -> list[str]:
     return []
 
 
-def _format_minutes(minutes: Any, fallback: str = "45 分钟") -> str:
+def _format_minutes(minutes: Any) -> str:
     """把分钟数转成前端适合展示的文字。"""
     if minutes is None:
-        return fallback
+        return ""
     try:
         minutes_int = int(minutes)
     except (TypeError, ValueError):
-        return fallback
+        return ""
     if minutes_int <= 0:
-        return fallback
+        return ""
     if minutes_int < 60:
         return f"{minutes_int} 分钟"
     hours = minutes_int // 60
@@ -123,10 +123,10 @@ def get_home_summary(db: Session, current_user: User) -> HomeSummaryResponse:
             lambda: db.query(Course).filter(Course.course_id == target_course_id).first(),
             None,
         )
-        target_course = course.name if course else None
+        target_course = course.name if course else ""
 
     if not target_course:
-        target_course = "人工智能基础"
+        target_course = ""
 
     active_path = _safe(
         db,
@@ -177,13 +177,13 @@ def get_home_summary(db: Session, current_user: User) -> HomeSummaryResponse:
         weak_points = _json_list(profile.weaknesses_json)[:3]
 
     if today_task:
-        today_topic = today_task.topic or "今日学习任务"
-        today_estimated_time = _format_minutes(today_task.estimated_minutes, profile.time_budget if profile else "45 分钟")
+        today_topic = today_task.topic or ""
+        today_estimated_time = _format_minutes(today_task.estimated_minutes)
         today_progress = 1.0 if today_task.status == "completed" else 0.0
     else:
-        first_weak = weak_points[0] if weak_points else "基础知识巩固"
-        today_topic = f"复习：{first_weak}"
-        today_estimated_time = profile.time_budget if profile and profile.time_budget else "45 分钟"
+        first_weak = weak_points[0] if weak_points else ""
+        today_topic = f"复习：{first_weak}" if first_weak else ""
+        today_estimated_time = profile.time_budget if profile and profile.time_budget else ""
         today_progress = 0.0
 
     total_minutes = _safe(

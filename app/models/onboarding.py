@@ -18,7 +18,6 @@ class OnboardingSurvey(Base):
     target_role = Column(String(30), default=Role.STUDENT.value, index=True, nullable=False)
     target_course_id = Column(String(64), nullable=True)
     submit_count = Column(Integer, default=0, nullable=False)
-    is_default = Column(Boolean, default=False, nullable=False)
     created_by = Column(String(100), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

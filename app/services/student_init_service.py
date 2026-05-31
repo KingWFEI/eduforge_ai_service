@@ -18,17 +18,14 @@ def _safe_list(value: Any) -> List[str]:
 
 
 def _extract_minutes(time_budget: str | None) -> int:
-    """
-    从“每天 45 分钟”里提取 45。
-    如果提取不到，就默认 45。
-    """
+
     if not time_budget:
-        return 45
+        return 0
 
     digits = "".join(ch for ch in time_budget if ch.isdigit())
 
     if not digits:
-        return 45
+        return 0
 
     return int(digits)
 
@@ -64,14 +61,14 @@ def initialize_student_learning_data(
     if existing_path:
         return
 
-    target_course = profile.get("target_course") or "人工智能基础"
+    target_course = profile.get("target_course")
     weaknesses = _safe_list(profile.get("weaknesses"))
     learning_preferences = _safe_list(profile.get("learning_preferences"))
-    time_budget = profile.get("time_budget") or "每天 45 分钟"
-    daily_minutes = _extract_minutes(time_budget)
+    time_budget = profile.get("time_budget")
+    daily_minutes = _extract_minutes(time_budget) if time_budget else 0
 
-    if not weaknesses:
-        weaknesses = ["基础概念", "核心知识点", "综合练习"]
+    if not target_course or not weaknesses:
+        return
 
     # 2. 确保课程存在
     course_id = "course_ai_basic"

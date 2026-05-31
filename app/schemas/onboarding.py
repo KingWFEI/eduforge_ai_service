@@ -210,6 +210,17 @@ class OnboardingSubmitResponse(BaseModel):
     status: str = "processing"
     next_action: str = "poll_profile_result"
 
+class OnBoardingStatusData(BaseModel):
+    need_onboarding: bool
+    onboarding_status: str
+    survey_id: Optional[str] = None
+    submission_id: Optional[str] = None
+    profile_id: Optional[str] = None
+
+    completed_at: Optional[datetime] = None
+    skipped_at: Optional[datetime] = None
+    reset_at: Optional[datetime] = None
+
 
 # ─── 画像查询 ─────────────────────────────────────────
 
@@ -269,3 +280,4 @@ class ProfileQueryData(BaseModel):
     profile: Optional[ProfileData] = None
     analysis: Optional[AnalysisData] = None
     error: Optional[ErrorInfo] = None
+

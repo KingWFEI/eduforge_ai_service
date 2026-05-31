@@ -1,5 +1,5 @@
 # 集中导入所有 ORM 模型，确保 Base.metadata 能发现所有表
-from app.models.user import User
+from app.models.user import User,UserOnboardingStatus
 from app.models.verification_code import VerificationCode
 from app.models.login_log import LoginLog
 from app.models.course import Course
@@ -13,9 +13,13 @@ from app.models.learning_path import LearningPath, LearningPathTask
 from app.models.exercise import ExerciseSet, ExerciseQuestion, ExerciseSubmission, ExerciseAnswer, WrongQuestion
 from app.models.evaluation import EvaluationReport, MasteryRecord, WeakPointRecord
 from app.models.other import StudyRecord, UserNotification, DashboardDailyStat, SystemSetting, PromptTemplate
+from app.models.profile_dialogue_messages import ProfileDialogueMessage
+from app.models.profile_dialogue_sessions import ProfileDialogueSession
+
 
 __all__ = [
     "User",
+    "UserOnboardingStatus",
     "VerificationCode",
     "LoginLog",
     "Course",
@@ -59,4 +63,6 @@ __all__ = [
     "DashboardDailyStat",
     "SystemSetting",
     "PromptTemplate",
+    "ProfileDialogueMessage",
+    "ProfileDialogueSession",
 ]

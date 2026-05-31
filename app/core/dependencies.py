@@ -24,7 +24,7 @@ def get_current_user(
     if credentials is None:
         raise AppException(
             code=ErrorCode.UNAUTHORIZED,
-            message="Token 缺失或过期",
+            message="未提供认证令牌",
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
@@ -34,7 +34,7 @@ def get_current_user(
     if payload is None:
         raise AppException(
             code=ErrorCode.UNAUTHORIZED,
-            message="Token 缺失或过期",
+            message="令牌无效或已过期",
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
@@ -42,7 +42,7 @@ def get_current_user(
     if username is None:
         raise AppException(
             code=ErrorCode.UNAUTHORIZED,
-            message="Token 缺失或过期",
+            message="令牌中缺少用户标识",
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
@@ -50,7 +50,7 @@ def get_current_user(
     if user is None:
         raise AppException(
             code=ErrorCode.UNAUTHORIZED,
-            message="Token 缺失或过期",
+            message="用户不存在或已注销",
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 

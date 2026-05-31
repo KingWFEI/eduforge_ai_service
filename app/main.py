@@ -3,7 +3,8 @@ import time
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 
-from app.api.v1 import admin_onboarding, admin_users, auth, courses, onboarding, users, home, learning_path, profile, resources
+from app.api.v1 import admin_onboarding, admin_users, auth, courses, onboarding, users, home, learning_path, profile, \
+    resources, profile_dialogue
 from app.utils.logging_config import setup_logging
 from app.utils.response import AppException, ErrorCode, fail, success
 
@@ -15,6 +16,7 @@ app = FastAPI(
     title="FastAPI Demo Backend",
     description="FastAPI demo backend service",
     version="0.4.0",
+    debug=True
 )
 
 
@@ -53,6 +55,13 @@ async def request_logging_middleware(request: Request, call_next):
 @app.exception_handler(AppException)
 async def app_exception_handler(request: Request, exc: AppException):
     """统一业务异常处理器"""
+    logger.warning(
+        "app exception | path=%s method=%s code=%s message=%s",
+        request.url.path,
+        request.method,
+        exc.code,
+        exc.message,
+    )
     return fail(
         code=exc.code,
         message=exc.message,
@@ -75,6 +84,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     """HTTP 异常处理器（将 FastAPI 原生异常转换为统一格式）"""
+    logger.warning(
+        "http exception | path=%s method=%s status=%s detail=%s",
+        request.url.path,
+        request.method,
+        exc.status_code,
+        exc.detail,
+    )
     code_map = {
         status.HTTP_401_UNAUTHORIZED: ErrorCode.UNAUTHORIZED,
         status.HTTP_403_FORBIDDEN: ErrorCode.FORBIDDEN,
@@ -117,3 +133,4 @@ app.include_router(admin_users.router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
 app.include_router(learning_path.router, prefix="/api")
 app.include_router(resources.router, prefix="/api")
+app.include_router(profile_dialogue.router,prefix="/api")

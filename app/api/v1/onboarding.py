@@ -1,13 +1,15 @@
 import asyncio
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.constants.role import Role
-from app.core.dependencies import require_role
+from app.core.dependencies import require_role, get_current_user
 from app.db.session import get_db
+from app.models import UserOnboardingStatus
 from app.models.onboarding import OnboardingSubmission
 from app.models.profile_analysis import ProfileAnalysis
 from app.models.user import User
@@ -20,6 +22,7 @@ from app.schemas.onboarding import (
     OnboardingSurveyResponse,
     ProfileData,
     ProfileQueryData,
+    OnBoardingStatusData
 )
 from app.services.onboarding_service import (
     get_default_published_student_survey,
@@ -264,4 +267,95 @@ def get_profile_result(
             error=error_info,
         ),
         message=status_msg_map.get(analysis.status, "未知状态"),
+    )
+
+# 查询当前用户是否需要填写问卷
+@router.get("/status")
+def get_onboarding_status(
+        db:Session = Depends(get_db),
+        current_user: User = Depends(require_role(Role.STUDENT)),
+):
+    # 查询当前用户填写引导问卷的状态
+    onboarding_status = (
+        db.query(UserOnboardingStatus)
+        .filter(UserOnboardingStatus.user_id == current_user.id)
+        .first()
+    )
+    # 如果没有记录，说明是老数据用户或刚注册但未初始化状态
+    # 这里自动创建一条 not_started 记录，避免前端拿不到状态
+    if onboarding_status is None:
+        onboarding_status=UserOnboardingStatus(
+            user_id=current_user.id,
+            status="not_started",
+            need_onboarding=True,
+        )
+        db.add(onboarding_status)
+        db.commit()
+        db.refresh(onboarding_status)
+
+    # 根据 status 重新计算 need_onboarding，避免数据库字段不一致
+    need_onboarding = onboarding_status.status in [
+        "not_started",
+        "reset_required"
+    ]
+    # 如果数据库里的 need_onboarding 和计算结果不一致，顺手修正
+    if onboarding_status.need_onboarding != need_onboarding:
+        onboarding_status.need_onboarding = need_onboarding
+        db.commit()
+        db.refresh(onboarding_status)
+
+    return success(
+        OnBoardingStatusData(
+            need_onboarding=need_onboarding,
+            onboarding_status=onboarding_status.status,
+            survey_id=onboarding_status.survey_id,
+            submission_id=onboarding_status.submission_id,
+            profile_id=onboarding_status.profile_id,
+            completed_at=onboarding_status.completed_at,
+            skipped_at=onboarding_status.skipped_at,
+            reset_at=onboarding_status.reset_at,
+        )
+    )
+
+# 用户跳过引导问卷填写
+@router.post("/skip", response_model=ApiResponse[OnBoardingStatusData])
+def skip_onboarding(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT)),
+):
+    """用户跳过引导问卷，设置状态为 skipped"""
+    onboarding_status = (
+        db.query(UserOnboardingStatus)
+        .filter(UserOnboardingStatus.user_id == current_user.id)
+        .first()
+    )
+
+    if onboarding_status is None:
+        onboarding_status = UserOnboardingStatus(
+            user_id=current_user.id,
+            status="skipped",
+            need_onboarding=False,
+            skipped_at=datetime.now(timezone.utc),
+        )
+        db.add(onboarding_status)
+    else:
+        onboarding_status.status = "skipped"
+        onboarding_status.need_onboarding = False
+        onboarding_status.skipped_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(onboarding_status)
+
+    return success(
+        OnBoardingStatusData(
+            need_onboarding=False,
+            onboarding_status=onboarding_status.status,
+            survey_id=onboarding_status.survey_id,
+            submission_id=onboarding_status.submission_id,
+            profile_id=onboarding_status.profile_id,
+            completed_at=onboarding_status.completed_at,
+            skipped_at=onboarding_status.skipped_at,
+            reset_at=onboarding_status.reset_at,
+        ),
+        message="已跳过引导问卷",
     )
