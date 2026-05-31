@@ -1,15 +1,18 @@
+import os
 import time
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 
 from app.api.v1 import admin_onboarding, admin_users, auth, courses, onboarding, users, home, learning_path, profile, \
-    resources, profile_dialogue
+    resources, profile_dialogue, knowledge
 from app.utils.logging_config import setup_logging
 from app.utils.response import AppException, ErrorCode, fail, success
 
 # 配置日志
 logger = setup_logging()
+KNOWLEDGE_UPLOAD_MAX_MB = int(os.getenv("KNOWLEDGE_UPLOAD_MAX_MB", "50"))
+KNOWLEDGE_UPLOAD_MAX_BYTES = KNOWLEDGE_UPLOAD_MAX_MB * 1024 * 1024
 
 # 创建 FastAPI 应用实例
 app = FastAPI(
@@ -25,6 +28,27 @@ async def request_logging_middleware(request: Request, call_next):
     """HTTP 请求日志中间件：记录请求耗时、来源 IP 和状态"""
     start_time = time.perf_counter()
     client_host = request.client.host if request.client else "-"
+
+    if request.method == "POST" and request.url.path.startswith("/api/knowledge/upload/"):
+        content_length = request.headers.get("content-length")
+        content_length_value = int(content_length) if content_length and content_length.isdigit() else 0
+
+        if content_length_value > KNOWLEDGE_UPLOAD_MAX_BYTES:
+            process_time_ms = (time.perf_counter() - start_time) * 1000
+            logger.warning(
+                "upload rejected | method=%s path=%s client=%s content_length=%s max_bytes=%s duration_ms=%.2f",
+                request.method,
+                request.url.path,
+                client_host,
+                content_length,
+                KNOWLEDGE_UPLOAD_MAX_BYTES,
+                process_time_ms,
+            )
+            return fail(
+                code=ErrorCode.PAYLOAD_TOO_LARGE,
+                message=f"上传文件过大，当前最大允许 {KNOWLEDGE_UPLOAD_MAX_MB}MB",
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
 
     try:
         response = await call_next(request)
@@ -134,3 +158,4 @@ app.include_router(profile.router, prefix="/api")
 app.include_router(learning_path.router, prefix="/api")
 app.include_router(resources.router, prefix="/api")
 app.include_router(profile_dialogue.router,prefix="/api")
+app.include_router(knowledge.router, prefix="/api")

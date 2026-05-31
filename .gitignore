@@ -18,6 +18,10 @@ logs/
 # Uploads
 uploads/
 
+# Local vector store and downloaded models
+chroma_db/
+models/*/
+
 # Claude
 .claude/
 

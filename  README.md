@@ -1,6 +1,7 @@
 本地连接指令
-# bash
+```bash
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
 # 根据requirement.txt
 python -m pip install -r requirements.txt
 

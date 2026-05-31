@@ -3,7 +3,7 @@
 import json
 from typing import Any, Dict, List, Tuple
 
-from app.services.deepseek_service import DeepSeekService
+from app.services.llm_service import LLMService
 
 
 class ProfileGenerationSkill:
@@ -43,7 +43,7 @@ class ProfileGenerationSkill:
 
         # 2. 尝试调用 DeepSeek 生成更自然的 summary
         try:
-            llm_profile = self._generate_profile_with_deepseek(
+            llm_profile = self._generate_profile_with_llm(
                 student_id=student_id,
                 answers=answers,
                 rule_profile=rule_profile
@@ -170,7 +170,7 @@ class ProfileGenerationSkill:
             "confidence": confidence
         }
 
-    def _generate_profile_with_deepseek(
+    def _generate_profile_with_llm(
         self,
         student_id: str,
         answers: Dict[str, Any],
@@ -180,7 +180,7 @@ class ProfileGenerationSkill:
         调用 DeepSeek，根据问卷答案生成更自然、更完整的学习画像。
         """
 
-        service = DeepSeekService()
+        service = LLMService()
 
         system_prompt = """
 你是 EduForge-AI 系统中的“学生学习画像智能体”。
@@ -266,7 +266,7 @@ class ProfileGenerationSkill:
 }}
 """
 
-        return service.generate_json(
+        return service.generate_json_sync(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=2000
