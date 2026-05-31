@@ -108,7 +108,7 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 
     student_profile = StudentProfile(
         id=f"sp_{new_user.id:03d}",
-        student_id=f"u_{new_user.id:03d}",
+        student_id=str(new_user.id),
     )
     db.add(student_profile)
     db.commit()

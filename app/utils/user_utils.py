@@ -2,8 +2,8 @@ from app.models.user import User
 
 
 def format_user_id(user_id: int) -> str:
-    """将数字 ID 格式化为前端友好的字符串格式（如 u_001）"""
-    return f"u_{user_id:03d}"
+    """Return the persisted users.id value as the external user identifier."""
+    return str(user_id)
 
 
 def user_to_response(user: User) -> dict:
