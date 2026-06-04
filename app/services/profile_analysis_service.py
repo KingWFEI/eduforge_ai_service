@@ -8,6 +8,7 @@ from app.agents.onboarding_profile_agent import OnboardingProfileAgent
 from app.db.session import SessionLocal
 from app.models.profile_analysis import ProfileAnalysis
 from app.models.student_profile import StudentProfile
+from app.services.llm_service import LLMService
 
 
 def _update_analysis(
@@ -54,7 +55,7 @@ async def run_profile_analysis(
         )
 
         # 调用 Agent（内部 DeepSeek 调用是同步的，放入线程池避免阻塞事件循环）
-        agent = OnboardingProfileAgent()
+        agent = OnboardingProfileAgent(LLMService())
         result = await asyncio.to_thread(
             agent.run, {
                 "student_id": student_id,

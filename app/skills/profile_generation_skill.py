@@ -18,6 +18,9 @@ class ProfileGenerationSkill:
     5. 大模型失败时自动回退规则画像。
     """
 
+    def __init__(self, llm_service: LLMService) -> None:
+        self.llm_service = llm_service
+
     def generate_profile(
         self,
         student_id: str,
@@ -180,8 +183,6 @@ class ProfileGenerationSkill:
         调用 DeepSeek，根据问卷答案生成更自然、更完整的学习画像。
         """
 
-        service = LLMService()
-
         system_prompt = """
 你是 EduForge-AI 系统中的“学生学习画像智能体”。
 
@@ -266,7 +267,7 @@ class ProfileGenerationSkill:
 }}
 """
 
-        return service.generate_json_sync(
+        return self.llm_service.generate_json_sync(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=2000

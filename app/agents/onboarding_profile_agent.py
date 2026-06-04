@@ -19,7 +19,7 @@ class OnboardingProfileAgent(BaseAgent):
         student_id = context.get("student_id", "u_demo")
         answers = context.get("answers", {})
 
-        skill = ProfileGenerationSkill()
+        skill = ProfileGenerationSkill(self.llm_service)
 
         result = skill.generate_profile(
             student_id=student_id,
