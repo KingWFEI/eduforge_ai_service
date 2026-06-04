@@ -16,3 +16,5 @@ alembic upgrade head
 alembic downgrade -1
 回滚到指定版本
 alembic downgrade 版本号
+
+本地本地 Git 代理 127.0.0.1:7892

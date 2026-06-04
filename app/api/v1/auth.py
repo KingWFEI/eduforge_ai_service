@@ -118,8 +118,6 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 
 # ── 账号密码登录 ─────────────────────────────────────────
-
-
 @router.post("/login", response_model=ApiResponse[TokenResponse])
 def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
     """账号密码登录（Flutter 学生端 / Vue 管理端共用）"""
@@ -140,9 +138,7 @@ def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
     )
 
 
-# ── 手机号验证码登录 ──────────────────────────────────────
-
-
+# ── 手机号验证码登录 ─────────────────────────────────────
 @router.post("/login-code", response_model=ApiResponse[SendCodeResponse])
 def login_code(payload: SendCodeRequest, db: Session = Depends(get_db)):
     """发送登录验证码（手机号必须已注册）"""
@@ -182,8 +178,6 @@ def login_by_phone(payload: PhoneLoginRequest, db: Session = Depends(get_db)):
 
 
 # ── 用户信息与登出 ───────────────────────────────────────
-
-
 @router.get("/me", response_model=ApiResponse[UserResponse])
 def get_me(current_user: User = Depends(get_current_user)):
     """获取当前登录用户信息"""
