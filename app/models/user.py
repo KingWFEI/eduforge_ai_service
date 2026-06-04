@@ -53,7 +53,9 @@ class UserOnboardingStatus(Base):
 
     # 引导状态：
     # not_started：未开始
+    # processing：问卷已提交，正在生成画像
     # completed：已完成
+    # failed：画像生成失败，可重新提交
     # skipped：已跳过
     # reset_required：需要重新填写
     status = Column(
@@ -90,8 +92,8 @@ class UserOnboardingStatus(Base):
 
     # 是否需要强制填写
     # 一般情况下：
-    # not_started / reset_required => true
-    # completed / skipped => false
+    # not_started / failed / reset_required => true
+    # processing / completed / skipped => false
     need_onboarding = Column(
         Boolean,
         default=True,

@@ -102,6 +102,7 @@ async def submit_onboarding(
         survey_id=req.survey_id,
         student_id=student_id,
         answers_json=req.answers,
+        status="processing",
     )
     db.add(submission)
     db.commit()
@@ -119,6 +120,23 @@ async def submit_onboarding(
         current_step="画像分析任务已创建，等待处理",
     )
     db.add(analysis)
+
+    onboarding_status = (
+        db.query(UserOnboardingStatus)
+        .filter(UserOnboardingStatus.user_id == current_user.id)
+        .first()
+    )
+    if onboarding_status is None:
+        onboarding_status = UserOnboardingStatus(user_id=current_user.id)
+        db.add(onboarding_status)
+
+    onboarding_status.status = "processing"
+    onboarding_status.survey_id = req.survey_id
+    onboarding_status.submission_id = submission_id
+    onboarding_status.profile_id = None
+    onboarding_status.need_onboarding = False
+    onboarding_status.completed_at = None
+    onboarding_status.skipped_at = None
     db.commit()
 
     # 6. 触发后台异步分析
@@ -126,6 +144,7 @@ async def submit_onboarding(
         run_profile_analysis(
             analysis_id=analysis_id,
             submission_id=submission_id,
+            user_id=current_user.id,
             student_id=student_id,
             answers=req.answers,
         )
@@ -296,6 +315,7 @@ def get_onboarding_status(
     # 根据 status 重新计算 need_onboarding，避免数据库字段不一致
     need_onboarding = onboarding_status.status in [
         "not_started",
+        "failed",
         "reset_required"
     ]
     # 如果数据库里的 need_onboarding 和计算结果不一致，顺手修正

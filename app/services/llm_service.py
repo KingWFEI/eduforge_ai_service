@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import re
 from typing import Any, AsyncGenerator, Dict, Optional
@@ -11,6 +12,8 @@ from openai import OpenAI
 
 
 load_dotenv()
+
+logger = logging.getLogger("app.services.llm_service")
 
 
 class LLMService:
@@ -55,10 +58,24 @@ class LLMService:
             request_kwargs["response_format"] = response_format
 
         response = self.client.chat.completions.create(**request_kwargs)
-        content = response.choices[0].message.content
+        choice = response.choices[0]
+        content = choice.message.content
 
         if not content:
             raise RuntimeError("LLM 返回内容为空")
+
+        if choice.finish_reason != "stop":
+            logger.error(
+                "LLM output incomplete | model=%s | finish_reason=%s | content_length=%d",
+                self.model,
+                choice.finish_reason,
+                len(content),
+            )
+            if choice.finish_reason == "length":
+                raise RuntimeError(
+                    f"LLM 输出因 max_tokens={max_tokens} 限制被截断，未生成完整内容"
+                )
+            raise RuntimeError(f"LLM 输出未正常完成：finish_reason={choice.finish_reason}")
 
         return content.strip()
 
@@ -206,11 +223,12 @@ class LLMService:
             raise RuntimeError("LLM 返回内容为空，无法解析 JSON")
 
         raw = content.strip()
+        parse_error: Optional[json.JSONDecodeError] = None
 
         try:
             return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as exc:
+            parse_error = exc
 
         code_block_match = re.search(
             r"```(?:json)?\s*(.*?)```",
@@ -222,15 +240,30 @@ class LLMService:
             json_text = code_block_match.group(1).strip()
             try:
                 return json.loads(json_text)
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                parse_error = exc
 
         object_match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
         if object_match:
             json_text = object_match.group(0).strip()
             try:
                 return json.loads(json_text)
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                parse_error = exc
 
-        raise RuntimeError(f"LLM 返回内容不是合法 JSON：{content}")
+        logger.error(
+            "LLM returned invalid JSON | model=%s | content_length=%d | "
+            "json_error=%s | line=%s | column=%s | preview=%r",
+            self.model,
+            len(content),
+            parse_error.msg if parse_error else "unknown",
+            parse_error.lineno if parse_error else "unknown",
+            parse_error.colno if parse_error else "unknown",
+            content[:500],
+        )
+        if parse_error:
+            raise RuntimeError(
+                "LLM 返回内容不是合法 JSON："
+                f"{parse_error.msg}（第 {parse_error.lineno} 行，第 {parse_error.colno} 列）"
+            )
+        raise RuntimeError("LLM 返回内容不是合法 JSON")

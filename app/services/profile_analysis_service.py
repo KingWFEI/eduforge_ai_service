@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -6,9 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.agents.onboarding_profile_agent import OnboardingProfileAgent
 from app.db.session import SessionLocal
+from app.models.onboarding import OnboardingSubmission
 from app.models.profile_analysis import ProfileAnalysis
 from app.models.student_profile import StudentProfile
+from app.models.user import UserOnboardingStatus
 from app.services.llm_service import LLMService
+
+logger = logging.getLogger("app.services.profile_analysis")
 
 
 def _update_analysis(
@@ -25,11 +30,13 @@ def _update_analysis(
             db.commit()
     except Exception:
         db.rollback()
+        logger.exception("failed to update profile analysis | analysis_id=%s", analysis_id)
 
 
 async def run_profile_analysis(
     analysis_id: str,
     submission_id: str,
+    user_id: int,
     student_id: str,
     answers: dict,
 ) -> None:
@@ -129,21 +136,75 @@ async def run_profile_analysis(
             analysis.progress = 100
             analysis.current_step = "画像分析完成"
             analysis.completed_at = datetime.now(timezone.utc)
+
+            submission = (
+                db.query(OnboardingSubmission)
+                .filter(OnboardingSubmission.id == submission_id)
+                .first()
+            )
+            if submission:
+                submission.generated_profile_id = profile.id
+                submission.status = "completed"
+
+            onboarding_status = (
+                db.query(UserOnboardingStatus)
+                .filter(UserOnboardingStatus.user_id == user_id)
+                .first()
+            )
+            if onboarding_status is None:
+                onboarding_status = UserOnboardingStatus(
+                    user_id=user_id,
+                    submission_id=submission_id,
+                )
+                db.add(onboarding_status)
+
+            if onboarding_status.submission_id in (None, submission_id):
+                onboarding_status.status = "completed"
+                onboarding_status.survey_id = submission.survey_id if submission else None
+                onboarding_status.submission_id = submission_id
+                onboarding_status.profile_id = profile.id
+                onboarding_status.need_onboarding = False
+                onboarding_status.completed_at = datetime.now(timezone.utc)
             db.commit()
 
     except Exception as e:
         db.rollback()
+        logger.exception(
+            "profile analysis failed | analysis_id=%s | submission_id=%s | student_id=%s",
+            analysis_id,
+            submission_id,
+            student_id,
+        )
         error_msg = str(e)
-        agent_trace = None
-        if result:
-            agent_trace = {
-                "agent_used": result.get("agent_used"),
-                "skill_used": result.get("skill_used"),
-                "skill_name": result.get("skill_name"),
-                "llm_used": result.get("llm_used"),
-                "llm_provider": result.get("llm_provider"),
-                "llm_error": result.get("llm_error"),
-            }
+
+        submission = (
+            db.query(OnboardingSubmission)
+            .filter(OnboardingSubmission.id == submission_id)
+            .first()
+        )
+        if submission:
+            submission.status = "failed"
+
+        onboarding_status = (
+            db.query(UserOnboardingStatus)
+            .filter(UserOnboardingStatus.user_id == user_id)
+            .first()
+        )
+        if onboarding_status is None:
+            onboarding_status = UserOnboardingStatus(
+                user_id=user_id,
+                submission_id=submission_id,
+            )
+            db.add(onboarding_status)
+
+        if onboarding_status.submission_id in (None, submission_id):
+            onboarding_status.status = "failed"
+            onboarding_status.survey_id = submission.survey_id if submission else None
+            onboarding_status.submission_id = submission_id
+            onboarding_status.need_onboarding = True
+
+        db.commit()
+
         _update_analysis(
             db, analysis_id,
             status="failed",
@@ -154,7 +215,14 @@ async def run_profile_analysis(
                 "error_code": "ANALYSIS_FAILED",
                 "error_message": error_msg,
             },
-            agent_trace_json=agent_trace,
+            agent_trace_json={
+                "agent_used": "Onboarding Profile Agent",
+                "skill_used": True,
+                "skill_name": "ProfileGenerationSkill",
+                "llm_used": False,
+                "llm_provider": "DeepSeek",
+                "llm_error": error_msg,
+            },
         )
     finally:
         db.close()
