@@ -9,7 +9,7 @@ from app.agents.onboarding_profile_agent import OnboardingProfileAgent
 from app.db.session import SessionLocal
 from app.models.onboarding import OnboardingSubmission
 from app.models.profile_analysis import ProfileAnalysis
-from app.models.student_profile import StudentProfile
+from app.models.learning_profile import StudentLearningProfile
 from app.models.user import UserOnboardingStatus
 from app.services.llm_service import LLMService
 
@@ -46,7 +46,7 @@ async def run_profile_analysis(
     完整流程：
     1. 更新状态为 processing
     2. 调用 Agent 生成画像
-    3. 保存 StudentProfile
+    3. 保存 StudentLearningProfile
     4. 更新 ProfileAnalysis 结果
     5. 标记 completed / failed
     """
@@ -78,33 +78,33 @@ async def run_profile_analysis(
 
         profile_data = result["profile"]
 
-        # 保存 / 更新 StudentProfile
+        # 保存 / 更新综合学习画像
         profile = (
-            db.query(StudentProfile)
-            .filter(StudentProfile.student_id == student_id)
+            db.query(StudentLearningProfile)
+            .filter(StudentLearningProfile.student_id == student_id)
             .first()
         )
 
         if not profile:
-            profile = StudentProfile(
-                id="profile_" + uuid.uuid4().hex[:12],
+            profile = StudentLearningProfile(
+                id="learning_profile_" + uuid.uuid4().hex[:12],
                 student_id=student_id,
             )
             db.add(profile)
 
-        profile.major = profile_data.get("major")
-        profile.grade = profile_data.get("grade")
-        profile.target_course = profile_data.get("target_course")
-        profile.learning_goals_json = profile_data.get("learning_goals")
-        profile.coding_level = profile_data.get("coding_level")
-        profile.math_level = profile_data.get("math_level")
-        profile.course_level = profile_data.get("course_level")
         profile.learning_preferences_json = profile_data.get("learning_preferences")
-        profile.weaknesses_json = profile_data.get("weaknesses")
-        profile.cognitive_style_json = profile_data.get("cognitive_style")
-        profile.time_budget = profile_data.get("time_budget")
+        profile.cognitive_traits_json = profile_data.get("cognitive_traits")
+        profile.learning_habits_json = profile_data.get("learning_habits")
+        profile.motivation_factors_json = profile_data.get("motivation_factors")
+        profile.general_strengths_json = profile_data.get("general_strengths")
+        profile.general_challenges_json = profile_data.get("general_challenges")
+        profile.preferred_pace = profile_data.get("preferred_pace")
+        profile.available_time_json = profile_data.get("available_time")
         profile.summary = profile_data.get("summary")
-        profile.confidence = profile_data.get("confidence")
+        profile.profile_dimensions_json = profile_data.get("profile_dimensions")
+        profile.evidence_json = profile_data.get("evidence")
+        profile.confidence_json = profile_data.get("confidence")
+        profile.version = (profile.version or 0) + 1
         profile.source = "onboarding"
         db.commit()
         db.refresh(profile)
@@ -121,9 +121,9 @@ async def run_profile_analysis(
             analysis.profile_id = profile.id
             analysis.analysis_text = profile_data.get("analysis") or profile.summary
             analysis.learning_suggestion = profile_data.get("learning_suggestion")
-            analysis.resource_strategy_json = profile_data.get("resource_strategy")
-            analysis.weakness_analysis_json = profile_data.get("weakness_analysis")
-            analysis.confidence = profile.confidence
+            analysis.resource_strategy_json = None
+            analysis.weakness_analysis_json = None
+            analysis.confidence = (profile.confidence_json or {}).get("overall")
             analysis.agent_trace_json = {
                 "agent_used": result.get("agent_used"),
                 "skill_used": result.get("skill_used"),

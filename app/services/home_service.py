@@ -12,7 +12,7 @@ from app.models.exercise import ExerciseSubmission
 from app.models.learning_path import LearningPath, LearningPathTask
 from app.models.other import StudyRecord
 from app.models.resource_agent import LearningResource
-from app.models.student_profile import StudentProfile
+from app.models.learning_profile import StudentLearningProfile
 from app.models.user import User
 from app.schemas.home import HomeSummaryResponse
 
@@ -107,26 +107,12 @@ def get_home_summary(db: Session, current_user: User) -> HomeSummaryResponse:
 
     profile = _safe(
         db,
-        lambda: db.query(StudentProfile)
-        .filter(StudentProfile.student_id == student_id)
-        .order_by(StudentProfile.last_updated.desc())
+        lambda: db.query(StudentLearningProfile)
+        .filter(StudentLearningProfile.student_id == student_id)
+        .order_by(StudentLearningProfile.last_updated.desc())
         .first(),
         None,
     )
-
-    target_course_id = profile.target_course_id if profile else None
-    target_course = profile.target_course if profile else None
-
-    if not target_course and target_course_id:
-        course = _safe(
-            db,
-            lambda: db.query(Course).filter(Course.course_id == target_course_id).first(),
-            None,
-        )
-        target_course = course.name if course else ""
-
-    if not target_course:
-        target_course = ""
 
     active_path = _safe(
         db,
@@ -137,6 +123,18 @@ def get_home_summary(db: Session, current_user: User) -> HomeSummaryResponse:
         .first(),
         None,
     )
+
+    target_course_id = active_path.course_id if active_path else None
+    course = (
+        _safe(
+            db,
+            lambda: db.query(Course).filter(Course.course_id == target_course_id).first(),
+            None,
+        )
+        if target_course_id
+        else None
+    )
+    target_course = course.name if course else ""
 
     course_progress = _normalize_progress(active_path.progress if active_path else 0)
 
@@ -174,7 +172,7 @@ def get_home_summary(db: Session, current_user: User) -> HomeSummaryResponse:
         [],
     )
     if not weak_points and profile:
-        weak_points = _json_list(profile.weaknesses_json)[:3]
+        weak_points = _json_list(profile.general_challenges_json)[:3]
 
     if today_task:
         today_topic = today_task.topic or ""
@@ -183,7 +181,12 @@ def get_home_summary(db: Session, current_user: User) -> HomeSummaryResponse:
     else:
         first_weak = weak_points[0] if weak_points else ""
         today_topic = f"复习：{first_weak}" if first_weak else ""
-        today_estimated_time = profile.time_budget if profile and profile.time_budget else ""
+        available_time = profile.available_time_json if profile else {}
+        today_estimated_time = (
+            available_time.get("description", "")
+            if isinstance(available_time, dict)
+            else ""
+        )
         today_progress = 0.0
 
     total_minutes = _safe(
@@ -213,7 +216,7 @@ def get_home_summary(db: Session, current_user: User) -> HomeSummaryResponse:
         0.0,
     )
 
-    recommend_query_course_id = target_course_id or (active_path.course_id if active_path else None)
+    recommend_query_course_id = target_course_id
 
     def _count_recommend_resources() -> int:
         query = db.query(func.count(LearningResource.id)).filter(

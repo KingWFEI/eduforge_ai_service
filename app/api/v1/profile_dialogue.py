@@ -35,15 +35,15 @@ def create_profile_dialogue_session(
 ):
     opening_message = (
         "你好，我是你的 AI 学习画像助手。"
-        "我会通过几个简单问题了解你的学习目标、基础水平、偏好和薄弱点，"
-        "然后帮你生成专属学习画像。我们先从你的专业、年级和目标课程开始吧。"
+        "我会通过几个简单问题了解你的学习偏好、习惯、动力和学习节奏，"
+        "然后帮你生成跨课程的综合学习画像。我们先聊聊你通常更喜欢怎样学习吧。"
     )
 
     session = ProfileDialogueSession(
         student_id=current_user.id,
         scene=payload.scene,
         status="collecting",
-        current_slot="basic_info",
+        current_slot="learning_style",
         collected_slots_json=[],
         missing_slots_json=PROFILE_DIALOGUE_SLOT_ORDER,
         extracted_fields_json={},
@@ -59,7 +59,7 @@ def create_profile_dialogue_session(
         student_id=current_user.id,
         role="assistant",
         content=opening_message,
-        slot="basic_info",
+        slot="learning_style",
     )
 
     db.add(assistant_msg)
@@ -131,10 +131,10 @@ def confirm_profile_dialogue(
     preview = session.profile_preview_json or {}
 
     # TODO:
-    # 这里写入你的 student_profiles 表
+    # 这里写入 student_learning_profiles 表
     # 也可以创建 profile_versions
     #
-    # profile = StudentProfile(...)
+    # profile = StudentLearningProfile(...)
     # db.add(profile)
     # db.commit()
 
@@ -422,7 +422,7 @@ async def get_dialogue_session_messages(
         ProfileDialogueSessionMessagesData(
             session_id=session.id,
             status=session.status,
-            current_slot=session.current_slot or "basic_info",
+            current_slot=session.current_slot or "learning_style",
             progress=session.progress or 0.0,
             messages=message_items,
             extracted_fields=session.extracted_fields_json or {},

@@ -21,9 +21,9 @@ class ProfileDialogueSession(Base):
     status = Column(String(30), default="collecting", index=True, nullable=False)
 
     # 当前正在采集哪个画像维度
-    current_slot = Column(String(50), default="basic_info", nullable=False)
+    current_slot = Column(String(50), default="learning_style", nullable=False)
 
-    # 已完成的 slot，例如 ["basic_info", "learning_goal"]
+    # 已完成的 slot，例如 ["learning_style", "learning_habits"]
     collected_slots_json = Column(JSON, default=list, nullable=False)
 
     # 还缺哪些 slot

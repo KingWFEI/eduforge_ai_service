@@ -4,7 +4,7 @@ from typing import AsyncGenerator
 
 from sqlalchemy.orm import Session
 
-from fastapi import Request
+from fastapi import Request, status
 from app.agents.dialogue_agent import RelevanceJudgeAgent
 from app.agents.dialogue_agent import ProfileExtractorAgent
 from app.agents.dialogue_agent import DialogueGuideAgent
@@ -31,6 +31,168 @@ class ProfileDialogueOrchestrator:
         self.guide_agent = DialogueGuideAgent(llm_service)
         self.profile_type_agent = ProfileTypeAgent(llm_service)
         self.safety_agent = SafetyAgent(llm_service)
+
+    async def handle_user_message(
+        self,
+        session_id: int,
+        student_id: int,
+        user_message: str,
+    ) -> dict:
+        """处理非流式画像对话消息并返回本轮完整状态。"""
+        session = (
+            self.db.query(ProfileDialogueSession)
+            .filter(
+                ProfileDialogueSession.id == session_id,
+                ProfileDialogueSession.student_id == student_id,
+            )
+            .first()
+        )
+        if session is None:
+            raise AppException(
+                code=ErrorCode.NOT_FOUND,
+                message="画像对话会话不存在",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        previous_slot = session.current_slot
+        current_slot = session.current_slot
+        existing_fields = session.extracted_fields_json or {}
+        collected_slots = session.collected_slots_json or []
+        session.last_active_at = datetime.utcnow()
+
+        user_msg = ProfileDialogueMessage(
+            session_id=session.id,
+            student_id=student_id,
+            role="user",
+            content=user_message,
+            slot=current_slot,
+            stream_status="completed",
+        )
+        self.db.add(user_msg)
+        self.db.commit()
+
+        try:
+            slot_requirements = PROFILE_SLOT_REQUIREMENTS.get(current_slot, [])
+            relevance_result = await self.relevance_agent.run({
+                "current_slot": current_slot,
+                "slot_requirements": slot_requirements,
+                "history_summary": self._load_history(session.id),
+                "user_message": user_message,
+            })
+            extract_result = await self.extractor_agent.run({
+                "current_slot": current_slot,
+                "slot_requirements": slot_requirements,
+                "existing_fields": existing_fields,
+                "user_message": user_message,
+            })
+
+            is_relevant = bool(relevance_result.get("is_relevant", False))
+            slot_completed = bool(extract_result.get("slot_completed", False))
+            extracted_fields = extract_result.get("extracted_fields", {}) or {}
+            merged_fields = self.state_updater.merge_fields(existing_fields, extracted_fields)
+            should_advance = is_relevant and slot_completed
+
+            if should_advance and current_slot not in collected_slots:
+                collected_slots.append(current_slot)
+
+            next_slot = current_slot
+            if should_advance:
+                next_slot = self.state_updater.get_next_slot(current_slot) or "confirm"
+
+            missing_slots = self.state_updater.calculate_missing_slots(collected_slots)
+            progress = self.state_updater.calculate_progress(collected_slots)
+            profile_preview = None
+            session_status = "collecting"
+
+            if progress >= 1.0 or next_slot == "confirm":
+                profile_type_result = await self.profile_type_agent.run({
+                    "extracted_fields": merged_fields,
+                })
+                profile_preview = {
+                    "profile_type": profile_type_result.get("profile_type"),
+                    "profile_type_name": profile_type_result.get("profile_type_name"),
+                    "summary": profile_type_result.get("summary"),
+                    "tags": profile_type_result.get("tags", []),
+                    "reason": profile_type_result.get("reason"),
+                    "confidence": profile_type_result.get("confidence"),
+                }
+                session_status = "ready_to_confirm"
+                next_slot = "confirm"
+
+            guide_input = {
+                "current_slot": current_slot,
+                "next_slot": next_slot,
+                "user_message": user_message,
+                "relevance_result": relevance_result,
+                "extract_result": extract_result,
+                "extracted_fields": merged_fields,
+                "missing_slots": missing_slots,
+                "profile_preview": profile_preview,
+            }
+            guide_result = await self.guide_agent.run(guide_input)
+            assistant_reply = guide_result.get("assistant_reply", "")
+            if not assistant_reply:
+                raise RuntimeError("画像对话引导智能体未返回 assistant_reply")
+
+            safety_result = await self.safety_agent.run({
+                "assistant_reply": assistant_reply,
+            })
+            if not safety_result.get("passed", True):
+                assistant_reply = safety_result.get(
+                    "safe_reply",
+                    "我理解你的意思，我们继续完善学习画像信息。",
+                )
+
+            assistant_msg = ProfileDialogueMessage(
+                session_id=session.id,
+                student_id=student_id,
+                role="assistant",
+                content=assistant_reply,
+                partial_content=assistant_reply,
+                slot=next_slot,
+                is_relevant=is_relevant,
+                should_advance=should_advance,
+                extracted_fields_json=extracted_fields,
+                stream_status="completed",
+                agent_result_json={
+                    "relevance_result": relevance_result,
+                    "extract_result": extract_result,
+                    "profile_preview": profile_preview,
+                    "guide_result": guide_result,
+                    "safety_result": safety_result,
+                },
+            )
+
+            session.current_slot = next_slot
+            session.collected_slots_json = collected_slots
+            session.missing_slots_json = missing_slots
+            session.extracted_fields_json = merged_fields
+            session.profile_preview_json = profile_preview
+            session.progress = progress
+            session.status = session_status
+            session.last_active_at = datetime.utcnow()
+
+            self.db.add(assistant_msg)
+            self.db.add(session)
+            self.db.commit()
+
+            return {
+                "session_id": session.id,
+                "status": session.status,
+                "current_slot": session.current_slot,
+                "previous_slot": previous_slot,
+                "assistant_reply": assistant_reply,
+                "is_relevant": is_relevant,
+                "should_advance": should_advance,
+                "extracted_fields": merged_fields,
+                "collected_slots": collected_slots,
+                "missing_slots": missing_slots,
+                "progress": progress,
+                "profile_preview": profile_preview,
+            }
+        except Exception:
+            self.db.rollback()
+            raise
 
     async def stream_user_message(
         self,

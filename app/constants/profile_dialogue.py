@@ -2,31 +2,28 @@ from enum import Enum
 
 
 class ProfileDialogueSlot(str, Enum):
-    BASIC_INFO = "basic_info"          # 专业、年级、目标课程
-    LEARNING_GOAL = "learning_goal"    # 学习目标
-    SKILL_LEVEL = "skill_level"        # 编程、数学、课程基础
-    LEARNING_STYLE = "learning_style"  # 学习偏好、认知风格
-    WEAK_POINTS = "weak_points"        # 薄弱点
-    TIME_BUDGET = "time_budget"        # 每日学习时间
-    CONFIRM = "confirm"                # 等待确认画像
+    LEARNING_STYLE = "learning_style"
+    LEARNING_HABITS = "learning_habits"
+    MOTIVATION = "motivation"
+    STRENGTHS_CHALLENGES = "strengths_challenges"
+    PACE_AND_TIME = "pace_and_time"
+    CONFIRM = "confirm"
 
 
 PROFILE_DIALOGUE_SLOT_ORDER = [
-    ProfileDialogueSlot.BASIC_INFO.value,
-    ProfileDialogueSlot.LEARNING_GOAL.value,
-    ProfileDialogueSlot.SKILL_LEVEL.value,
     ProfileDialogueSlot.LEARNING_STYLE.value,
-    ProfileDialogueSlot.WEAK_POINTS.value,
-    ProfileDialogueSlot.TIME_BUDGET.value,
+    ProfileDialogueSlot.LEARNING_HABITS.value,
+    ProfileDialogueSlot.MOTIVATION.value,
+    ProfileDialogueSlot.STRENGTHS_CHALLENGES.value,
+    ProfileDialogueSlot.PACE_AND_TIME.value,
 ]
 
 PROFILE_SLOT_REQUIREMENTS = {
-    "basic_info": ["major", "grade", "target_course"],
-    "learning_goal": ["learning_goals"],
-    "skill_level": ["coding_level", "math_level", "course_level"],
-    "learning_style": ["learning_preferences", "cognitive_style"],
-    "weak_points": ["weaknesses"],
-    "time_budget": ["time_budget"],
+    "learning_style": ["learning_preferences", "cognitive_traits"],
+    "learning_habits": ["learning_habits"],
+    "motivation": ["motivation_factors"],
+    "strengths_challenges": ["general_strengths", "general_challenges"],
+    "pace_and_time": ["preferred_pace", "available_time"],
 }
 
 class ProfileDialogueCloseReason(str, Enum):

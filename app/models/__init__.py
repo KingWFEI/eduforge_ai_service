@@ -6,6 +6,7 @@ from app.models.course import Course
 from app.models.course_structure import CourseChapter, KnowledgePoint, CourseDocument, KnowledgeChunk, VectorIndexRecord
 from app.models.onboarding import OnboardingSurvey, OnboardingQuestion, OnboardingOption, OnboardingSubmission, OnboardingAnswer
 from app.models.student_profile import StudentProfile
+from app.models.learning_profile import StudentLearningProfile, StudentDomainCompetency, StudentLearningContext
 from app.models.profile_analysis import ProfileVersion, ProfileAnalysis
 from app.models.resource_agent import LearningResource, ResourceReference, ResourceFeedback, ResourceFavorite, ResourceReview, ResourceGenerationTask, AgentTask, AgentTaskStep
 from app.models.chat import ChatSession, ChatMessage, ChatMessageSource, ChatFeedback
@@ -34,6 +35,9 @@ __all__ = [
     "OnboardingSubmission",
     "OnboardingAnswer",
     "StudentProfile",
+    "StudentLearningProfile",
+    "StudentDomainCompetency",
+    "StudentLearningContext",
     "ProfileVersion",
     "ProfileAnalysis",
     "LearningResource",

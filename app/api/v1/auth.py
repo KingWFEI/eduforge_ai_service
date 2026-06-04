@@ -10,7 +10,6 @@ from app.core.security import (
 )
 from app.db.session import get_db
 from app.models.user import User
-from app.models.student_profile import StudentProfile
 from app.constants.role import Role
 from app.schemas.user import (
     LoginRequest,
@@ -106,11 +105,6 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.add(new_user)
     db.flush()
 
-    student_profile = StudentProfile(
-        id=f"sp_{new_user.id:03d}",
-        student_id=str(new_user.id),
-    )
-    db.add(student_profile)
     db.commit()
     db.refresh(new_user)
 

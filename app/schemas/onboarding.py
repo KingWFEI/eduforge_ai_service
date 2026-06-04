@@ -225,23 +225,23 @@ class OnBoardingStatusData(BaseModel):
 # ─── 画像查询 ─────────────────────────────────────────
 
 class ProfileData(BaseModel):
-    """学生学习画像数据"""
+    """学生综合学习画像数据"""
     profile_id: str
     student_id: str
     name: str = ""
-    major: str = ""
-    grade: str = ""
-    target_course: str = ""
-    learning_goals: list[str] = []
-    coding_level: str = ""
-    math_level: str = ""
-    course_level: str = ""
-    learning_preferences: list[str] = []
-    weaknesses: list[str] = []
-    cognitive_style: list[str] = []
-    time_budget: str = ""
+    learning_preferences: list[Any] = Field(default_factory=list)
+    cognitive_traits: list[Any] = Field(default_factory=list)
+    learning_habits: list[Any] = Field(default_factory=list)
+    motivation_factors: list[Any] = Field(default_factory=list)
+    general_strengths: list[Any] = Field(default_factory=list)
+    general_challenges: list[Any] = Field(default_factory=list)
+    preferred_pace: str = ""
+    available_time: dict[str, Any] = Field(default_factory=dict)
     summary: str = ""
-    confidence: float = 0.0
+    profile_dimensions: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[Any] = Field(default_factory=list)
+    confidence: dict[str, Any] = Field(default_factory=dict)
+    version: int = 1
     last_updated: datetime
 
 
@@ -249,8 +249,6 @@ class AnalysisData(BaseModel):
     """画像分析数据"""
     analysis_text: Optional[str] = None
     learning_suggestion: Optional[str] = None
-    resource_strategy: Any = None
-    weakness_analysis: Any = None
 
 
 class AgentTrace(BaseModel):
@@ -280,4 +278,3 @@ class ProfileQueryData(BaseModel):
     profile: Optional[ProfileData] = None
     analysis: Optional[AnalysisData] = None
     error: Optional[ErrorInfo] = None
-

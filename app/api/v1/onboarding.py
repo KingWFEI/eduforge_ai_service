@@ -231,10 +231,10 @@ def get_profile_result(
     analysis_data = None
 
     if analysis.status == "completed" and analysis.profile_id:
-        from app.models.student_profile import StudentProfile
+        from app.models.learning_profile import StudentLearningProfile
         profile = (
-            db.query(StudentProfile)
-            .filter(StudentProfile.id == analysis.profile_id)
+            db.query(StudentLearningProfile)
+            .filter(StudentLearningProfile.id == analysis.profile_id)
             .first()
         )
         if profile:
@@ -242,27 +242,25 @@ def get_profile_result(
                 profile_id=profile.id,
                 student_id=profile.student_id,
                 name="",
-                major=profile.major or "",
-                grade=profile.grade or "",
-                target_course=profile.target_course or "",
-                learning_goals=profile.learning_goals_json or [],
-                coding_level=profile.coding_level or "",
-                math_level=profile.math_level or "",
-                course_level=profile.course_level or "",
                 learning_preferences=profile.learning_preferences_json or [],
-                weaknesses=profile.weaknesses_json or [],
-                cognitive_style=profile.cognitive_style_json or [],
-                time_budget=profile.time_budget or "",
+                cognitive_traits=profile.cognitive_traits_json or [],
+                learning_habits=profile.learning_habits_json or [],
+                motivation_factors=profile.motivation_factors_json or [],
+                general_strengths=profile.general_strengths_json or [],
+                general_challenges=profile.general_challenges_json or [],
+                preferred_pace=profile.preferred_pace or "",
+                available_time=profile.available_time_json or {},
                 summary=profile.summary or "",
-                confidence=profile.confidence or 0.0,
+                profile_dimensions=profile.profile_dimensions_json or {},
+                evidence=profile.evidence_json or [],
+                confidence=profile.confidence_json or {},
+                version=profile.version or 1,
                 last_updated=profile.last_updated,
             )
 
             analysis_data = AnalysisData(
                 analysis_text=analysis.analysis_text,
                 learning_suggestion=analysis.learning_suggestion,
-                resource_strategy=analysis.resource_strategy_json,
-                weakness_analysis=analysis.weakness_analysis_json,
             )
 
     # 确定 message
