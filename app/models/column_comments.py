@@ -20,6 +20,7 @@ TABLE_DESCRIPTIONS = {
     "course_documents": "课程资料",
     "knowledge_chunks": "知识块",
     "vector_index_records": "向量索引记录",
+    "course_structure_drafts": "课程结构草稿",
     "onboarding_surveys": "引导问卷",
     "onboarding_questions": "问卷问题",
     "onboarding_options": "问卷选项",
@@ -80,6 +81,8 @@ COMMON_COLUMN_COMMENTS = {
     "created_at": "创建时间",
     "updated_at": "更新时间",
     "course_id": "课程业务ID，通常关联 courses.course_id",
+    "parent_id": "父级ID，用于课程章/小节层级结构",
+    "level": "层级，1 表示章，2 表示小节",
     "resource_id": "学习资源ID",
     "document_id": "课程资料ID",
     "chapter_id": "章节ID",
@@ -100,6 +103,7 @@ COMMON_COLUMN_COMMENTS = {
     "sort_order": "排序值，数值越小越靠前",
     "created_by": "创建人标识",
     "updated_by": "更新人标识",
+    "confirmed_by": "确认人标识",
     "error_message": "错误信息",
     "progress": "进度值，通常为 0-100 或 0-1",
     "confidence": "置信度，通常为 0-1",
@@ -198,6 +202,12 @@ TABLE_COLUMN_COMMENTS = {
     },
     "vector_index_records": {
         "status": "索引任务状态，可选值如 processing、completed、failed",
+    },
+    "course_structure_drafts": {
+        "source_document_ids_json": "JSON 数组，生成草稿所使用的课程资料ID",
+        "draft_json": "JSON 对象，AI 识别出的课程章节、小节和知识点草稿",
+        "status": "草稿状态，可选值：draft、confirmed、cancelled",
+        "confirmed_at": "确认草稿时间",
     },
     "onboarding_surveys": {
         "survey_id": "问卷业务ID，对外使用的唯一标识",

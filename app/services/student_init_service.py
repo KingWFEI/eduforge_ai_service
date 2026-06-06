@@ -30,6 +30,79 @@ def _extract_minutes(time_budget: str | None) -> int:
     return int(digits)
 
 
+def _resolve_or_create_course_id(
+    db: Session,
+    target_course: str,
+    student_id: str,
+) -> str:
+    course = db.execute(
+        text(
+            """
+            SELECT course_id
+            FROM courses
+            WHERE name = :target_course
+            LIMIT 1
+            """
+        ),
+        {"target_course": target_course},
+    ).mappings().first()
+    if course:
+        return course["course_id"]
+
+    course = db.execute(
+        text(
+            """
+            SELECT course_id
+            FROM courses
+            WHERE :target_course LIKE CONCAT('%', name, '%')
+               OR name LIKE CONCAT('%', :target_course, '%')
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        ),
+        {"target_course": target_course},
+    ).mappings().first()
+    if course:
+        return course["course_id"]
+
+    course_id = "course_" + uuid.uuid4().hex[:12]
+    db.execute(
+        text(
+            """
+            INSERT INTO courses (
+                course_id,
+                name,
+                description,
+                cover_url,
+                semester,
+                status,
+                created_by,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :course_id,
+                :name,
+                :description,
+                NULL,
+                '2026春季',
+                'active',
+                :created_by,
+                NOW(),
+                NOW()
+            )
+            """
+        ),
+        {
+            "course_id": course_id,
+            "name": target_course,
+            "description": f"{target_course}个性化学习课程",
+            "created_by": student_id,
+        },
+    )
+    return course_id
+
+
 def initialize_student_learning_data(
     db: Session,
     student_id: str,
@@ -70,56 +143,12 @@ def initialize_student_learning_data(
     if not target_course or not weaknesses:
         return
 
-    # 2. 确保课程存在
-    course_id = "course_ai_basic"
-
-    course = db.execute(
-        text(
-            """
-            SELECT id, course_id
-            FROM courses
-            WHERE course_id = :course_id
-            LIMIT 1
-            """
-        ),
-        {"course_id": course_id},
-    ).mappings().first()
-
-    if not course:
-        db.execute(
-            text(
-                """
-                INSERT INTO courses (
-                    course_id,
-                    name,
-                    description,
-                    cover_url,
-                    semester,
-                    status,
-                    created_by,
-                    created_at,
-                    updated_at
-                )
-                VALUES (
-                    :course_id,
-                    :name,
-                    :description,
-                    NULL,
-                    '2026春季',
-                    'active',
-                    :created_by,
-                    NOW(),
-                    NOW()
-                )
-                """
-            ),
-            {
-                "course_id": course_id,
-                "name": target_course,
-                "description": f"{target_course}个性化学习课程",
-                "created_by": student_id,
-            },
-        )
+    # 2. 确保课程存在，优先复用当前课程表中同名或近似同名课程
+    course_id = _resolve_or_create_course_id(
+        db=db,
+        target_course=target_course,
+        student_id=student_id,
+    )
 
     # 3. 创建学习路径
     path_id = "path_" + uuid.uuid4().hex[:12]

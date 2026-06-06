@@ -10,6 +10,17 @@ class CourseChapter(Base):
 
     id = Column(String(64), primary_key=True, index=True)
     course_id = Column(String(64), ForeignKey("courses.course_id"), index=True, nullable=False)
+    parent_id = Column(
+        String(64),
+        ForeignKey(
+            "course_chapters.id",
+            name="fk_course_chapters_parent_id",
+            ondelete="CASCADE",
+        ),
+        index=True,
+        nullable=True,
+    )
+    level = Column(Integer, default=1, nullable=False)
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
     sort_order = Column(Integer, default=0)
@@ -97,3 +108,23 @@ class VectorIndexRecord(Base):
     finished_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class CourseStructureDraft(Base):
+    """AI 识别出的课程结构草稿"""
+    __tablename__ = "course_structure_drafts"
+    __table_args__ = (
+        Index("idx_course_structure_drafts_course_id", "course_id"),
+        Index("idx_course_structure_drafts_status", "status"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    course_id = Column(String(64), ForeignKey("courses.course_id"), nullable=False)
+    source_document_ids_json = Column(JSON, nullable=True)
+    draft_json = Column(JSON, nullable=False)
+    status = Column(String(30), server_default=text("'draft'"), nullable=False)
+    created_by = Column(String(64), nullable=True)
+    confirmed_by = Column(String(64), nullable=True)
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

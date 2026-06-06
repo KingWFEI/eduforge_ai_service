@@ -6,8 +6,9 @@ from app.core.dependencies import get_current_user, require_role
 from app.db.session import get_db
 from app.models.course import Course
 from app.models.user import User
-from app.schemas.course import CourseCreate, CourseResponse, CourseUploadResponse, CourseDocumentListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse
+from app.schemas.course import CourseCreate, CourseResponse, CourseUploadResponse, CourseDocumentListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse
 from app.services.course_service import list_course_documents, list_course_knowledge_chunks, delete_course_document, create_course_chapter, list_course_chapters, create_knowledge_point, list_knowledge_points, list_vector_index_records, link_course_document_to_chapter_and_knowledge_point, reindex_course_document
+from app.services.course_structure_service import generate_course_structure_draft, get_course_structure_draft, update_course_structure_draft, confirm_course_structure_draft
 from app.services.rag_service import upload_and_index_course_document
 from app.schemas.common import PageResponse
 from app.utils.response import ApiResponse, AppException, ErrorCode, success
@@ -74,6 +75,8 @@ def get_course(
 ):
     """获取课程详情"""
     course = db.query(Course).filter(Course.course_id == course_id).first()
+    if course is None and course_id.isdigit():
+        course = db.query(Course).filter(Course.id == int(course_id)).first()
 
     if course is None:
         raise AppException(
@@ -212,6 +215,95 @@ def create_chapter(
         title=payload.title,
         sort_order=payload.sort_order,
         description=payload.description,
+        parent_id=payload.parent_id,
+        level=payload.level,
+    )
+    return success(data)
+
+
+@router.post(
+    "/{course_id}/structure-drafts/generate",
+    response_model=ApiResponse[CourseStructureDraftResponse],
+)
+def generate_structure_draft(
+    course_id: str,
+    payload: CourseStructureDraftGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+):
+    """
+    AI 根据课程资料自动识别章节、小节、知识点，生成课程结构草稿。
+    """
+    data = generate_course_structure_draft(
+        db=db,
+        course_id=course_id,
+        document_ids=payload.document_ids,
+        created_by=str(current_user.id),
+    )
+    return success(data)
+
+
+@router.get(
+    "/{course_id}/structure-drafts/{draft_id}",
+    response_model=ApiResponse[CourseStructureDraftResponse],
+)
+def get_structure_draft(
+    course_id: str,
+    draft_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+):
+    """获取课程结构草稿，供 Vue 管理端展示和编辑。"""
+    data = get_course_structure_draft(
+        db=db,
+        course_id=course_id,
+        draft_id=draft_id,
+    )
+    return success(data)
+
+
+@router.put(
+    "/{course_id}/structure-drafts/{draft_id}",
+    response_model=ApiResponse[CourseStructureDraftResponse],
+)
+def update_structure_draft(
+    course_id: str,
+    draft_id: str,
+    payload: CourseStructureDraftUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+):
+    """保存教师在 Vue 管理端编辑后的课程结构草稿。"""
+    data = update_course_structure_draft(
+        db=db,
+        course_id=course_id,
+        draft_id=draft_id,
+        draft=payload.draft,
+    )
+    return success(data)
+
+
+@router.post(
+    "/{course_id}/structure-drafts/{draft_id}/confirm",
+    response_model=ApiResponse[CourseStructureConfirmResponse],
+)
+def confirm_structure_draft(
+    course_id: str,
+    draft_id: str,
+    payload: CourseStructureDraftConfirmRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+):
+    """
+    教师确认课程结构草稿后，写入正式章节/小节/知识点，并按结构重建知识块索引。
+    """
+    data = confirm_course_structure_draft(
+        db=db,
+        course_id=course_id,
+        draft_id=draft_id,
+        confirmed_by=str(current_user.id),
+        draft=payload.draft,
+        rebuild_index=payload.rebuild_index,
     )
     return success(data)
 

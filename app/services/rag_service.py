@@ -8,6 +8,7 @@ import chromadb
 import numpy as np
 from docx import Document
 from fastapi import UploadFile, status
+from pptx import Presentation
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import text
@@ -36,9 +37,10 @@ SUPPORTED_DOCUMENT_EXTENSIONS = {
     ".dot",
     ".pdf",
     ".docx",
+    ".pptx",
     ".ipynb",
 }
-SUPPORTED_DOCUMENT_TYPES_MESSAGE = "仅支持 txt、md、csv、json、py、dot、pdf、docx、ipynb 文件"
+SUPPORTED_DOCUMENT_TYPES_MESSAGE = "仅支持 txt、md、csv、json、py、dot、pdf、docx、pptx、ipynb 文件"
 
 
 def get_embedding_model():
@@ -100,7 +102,7 @@ def get_chroma_collection():
 def extract_text_from_file(file_path: str) -> str:
     """
     从上传文件中提取文本。
-    支持：txt、md、csv、json、py、dot、pdf、docx、ipynb
+    支持：txt、md、csv、json、py、dot、pdf、docx、pptx、ipynb
     """
     suffix = Path(file_path).suffix.lower()
 
@@ -128,6 +130,18 @@ def extract_text_from_file(file_path: str) -> str:
     if suffix == ".docx":
         doc = Document(file_path)
         return "\n".join([p.text for p in doc.paragraphs])
+
+    if suffix == ".pptx":
+        presentation = Presentation(file_path)
+        texts = []
+        for slide_index, slide in enumerate(presentation.slides, start=1):
+            slide_texts = []
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text:
+                    slide_texts.append(shape.text.strip())
+            if slide_texts:
+                texts.append(f"【第 {slide_index} 页】\n" + "\n".join(slide_texts))
+        return "\n\n".join(texts)
 
     if suffix == ".ipynb":
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -192,6 +206,258 @@ def split_text(text_value: str, chunk_size: int = 500, overlap: int = 80) -> Lis
             break
 
     return chunks
+
+
+def _normalize_text(value: str | None) -> str:
+    return (value or "").replace(" ", "").replace("\n", "").lower()
+
+
+def _load_course_structure(db: Session, course_id: str) -> list[dict[str, Any]]:
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                kp.id AS knowledge_point_id,
+                kp.name AS knowledge_point_name,
+                kp.description AS knowledge_point_description,
+                sec.id AS section_id,
+                sec.title AS section_title,
+                ch.id AS chapter_id,
+                ch.title AS chapter_title
+            FROM knowledge_points kp
+            LEFT JOIN course_chapters sec ON sec.id = kp.chapter_id
+            LEFT JOIN course_chapters ch ON ch.id = COALESCE(sec.parent_id, sec.id)
+            WHERE kp.course_id = :course_id
+            ORDER BY ch.sort_order ASC, sec.sort_order ASC, kp.sort_order ASC
+            """
+        ),
+        {"course_id": course_id},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _infer_chunk_structure(
+    chunk: str,
+    structure_items: list[dict[str, Any]],
+) -> tuple[str | None, str | None, list[str]]:
+    normalized_chunk = _normalize_text(chunk)
+    best_item = None
+    best_score = 0
+    keywords: list[str] = []
+
+    for item in structure_items:
+        score = 0
+        candidates = [
+            ("knowledge_point_name", 5),
+            ("section_title", 3),
+            ("chapter_title", 2),
+        ]
+        for key, weight in candidates:
+            value = item.get(key)
+            if value and _normalize_text(str(value)) in normalized_chunk:
+                score += weight
+        if score > best_score:
+            best_item = item
+            best_score = score
+
+    if best_item is None:
+        return None, None, keywords
+
+    for key in ("chapter_title", "section_title", "knowledge_point_name"):
+        value = best_item.get(key)
+        if value:
+            keywords.append(str(value))
+
+    return (
+        best_item.get("section_id") or best_item.get("chapter_id"),
+        best_item.get("knowledge_point_id"),
+        keywords,
+    )
+
+
+def rebuild_course_document_index_with_structure(
+    db: Session,
+    course_id: str,
+    document_id: str,
+    created_by: str | None = None,
+) -> dict:
+    document = db.execute(
+        text(
+            """
+            SELECT id, filename, file_path
+            FROM course_documents
+            WHERE id = :document_id
+              AND course_id = :course_id
+              AND COALESCE(status, 'active') <> 'deleted'
+            LIMIT 1
+            """
+        ),
+        {"document_id": document_id, "course_id": course_id},
+    ).mappings().first()
+
+    if document is None:
+        raise AppException(
+            code=ErrorCode.NOT_FOUND,
+            message="课程资料不存在或不属于该课程",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    structure_items = _load_course_structure(db, course_id)
+    raw_text = extract_text_from_file(document["file_path"])
+    chunks = split_text(raw_text)
+    if not chunks:
+        raise AppException(
+            code=ErrorCode.PARAM_ERROR,
+            message="文件内容为空，无法生成知识块。如果是扫描版 PDF，需要 OCR。",
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    delete_document_chunks_from_chroma(document_id=document_id)
+    db.execute(
+        text(
+            """
+            UPDATE knowledge_chunks
+            SET deleted = TRUE
+            WHERE document_id = :document_id
+              AND course_id = :course_id
+              AND COALESCE(deleted, 0) = 0
+            """
+        ),
+        {"document_id": document_id, "course_id": course_id},
+    )
+
+    index_record_id = "idx_" + uuid.uuid4().hex[:12]
+    db.execute(
+        text(
+            """
+            INSERT INTO vector_index_records (
+                id, course_id, document_id, index_type, collection_name,
+                status, chunk_count, success_count, failed_count,
+                error_message, started_at, finished_at, created_by, created_at
+            )
+            VALUES (
+                :id, :course_id, :document_id, 'chroma', :collection_name,
+                'processing', 0, 0, 0, NULL, NOW(), NULL, :created_by, NOW()
+            )
+            """
+        ),
+        {
+            "id": index_record_id,
+            "course_id": course_id,
+            "document_id": document_id,
+            "collection_name": COLLECTION_NAME,
+            "created_by": created_by,
+        },
+    )
+
+    collection = get_chroma_collection()
+    ids = []
+    documents = []
+    embeddings = []
+    metadatas = []
+    first_chapter_id = None
+
+    for index, chunk in enumerate(chunks):
+        chunk_id = "chunk_" + uuid.uuid4().hex[:12]
+        chapter_id, knowledge_point_id, keywords = _infer_chunk_structure(chunk, structure_items)
+        if first_chapter_id is None and chapter_id:
+            first_chapter_id = chapter_id
+        section = document["filename"] + f" - 片段 {index + 1}"
+        embedding = embed_text(chunk)
+        metadata = {
+            "course_id": course_id,
+            "document_id": document_id,
+            "filename": document["filename"],
+            "chunk_index": index,
+            "section": section,
+            "vector_id": chunk_id,
+        }
+        if chapter_id:
+            metadata["chapter_id"] = chapter_id
+        if knowledge_point_id:
+            metadata["knowledge_point_id"] = knowledge_point_id
+
+        ids.append(chunk_id)
+        documents.append(chunk)
+        embeddings.append(embedding)
+        metadatas.append(metadata)
+
+        db.execute(
+            text(
+                """
+                INSERT INTO knowledge_chunks (
+                    id, course_id, document_id, chapter_id, knowledge_point_id,
+                    section, content, keywords_json, page_no, chunk_index,
+                    vector_id, indexed, deleted, created_at
+                )
+                VALUES (
+                    :id, :course_id, :document_id, :chapter_id, :knowledge_point_id,
+                    :section, :content, :keywords_json, NULL, :chunk_index,
+                    :vector_id, 1, FALSE, NOW()
+                )
+                """
+            ),
+            {
+                "id": chunk_id,
+                "course_id": course_id,
+                "document_id": document_id,
+                "chapter_id": chapter_id,
+                "knowledge_point_id": knowledge_point_id,
+                "section": section,
+                "content": chunk,
+                "keywords_json": json.dumps(keywords, ensure_ascii=False),
+                "chunk_index": index,
+                "vector_id": chunk_id,
+            },
+        )
+
+    collection.add(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
+
+    db.execute(
+        text(
+            """
+            UPDATE course_documents
+            SET chapter_id = :chapter_id,
+                parse_status = 'parsed',
+                index_status = 'indexed',
+                chunk_count = :chunk_count,
+                updated_at = NOW()
+            WHERE id = :document_id
+              AND course_id = :course_id
+            """
+        ),
+        {
+            "chapter_id": first_chapter_id,
+            "chunk_count": len(chunks),
+            "document_id": document_id,
+            "course_id": course_id,
+        },
+    )
+    db.execute(
+        text(
+            """
+            UPDATE vector_index_records
+            SET status = 'completed',
+                chunk_count = :chunk_count,
+                success_count = :success_count,
+                failed_count = 0,
+                error_message = NULL,
+                finished_at = NOW()
+            WHERE id = :index_record_id
+            """
+        ),
+        {
+            "chunk_count": len(chunks),
+            "success_count": len(chunks),
+            "index_record_id": index_record_id,
+        },
+    )
+
+    return {
+        "document_id": document_id,
+        "chunk_count": len(chunks),
+        "index_record_id": index_record_id,
+    }
 
 
 def upload_and_index_course_document(
@@ -646,6 +912,41 @@ def build_chroma_where(
     }
 
 
+def resolve_course_id(db: Session, course_identifier: str) -> str | None:
+    """Resolve either courses.course_id or numeric courses.id to course_id."""
+
+    course = db.execute(
+        text(
+            """
+            SELECT course_id
+            FROM courses
+            WHERE course_id = :course_identifier
+            LIMIT 1
+            """
+        ),
+        {"course_identifier": course_identifier},
+    ).mappings().first()
+    if course is not None:
+        return course["course_id"]
+
+    if course_identifier.isdigit():
+        course = db.execute(
+            text(
+                """
+                SELECT course_id
+                FROM courses
+                WHERE id = :course_id
+                LIMIT 1
+                """
+            ),
+            {"course_id": int(course_identifier)},
+        ).mappings().first()
+        if course is not None:
+            return course["course_id"]
+
+    return None
+
+
 def search_knowledge_chunks(
     db: Session,
     course_id: str,
@@ -670,25 +971,15 @@ def search_knowledge_chunks(
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
-    # 1. 先确认课程存在
-    course = db.execute(
-        text(
-            """
-            SELECT course_id
-            FROM courses
-            WHERE course_id = :course_id
-            LIMIT 1
-            """
-        ),
-        {"course_id": course_id},
-    ).mappings().first()
-
-    if course is None:
+    # 1. 先确认课程存在，并兼容移动端误传 courses.id 的情况
+    resolved_course_id = resolve_course_id(db, course_id)
+    if resolved_course_id is None:
         raise AppException(
             code=ErrorCode.NOT_FOUND,
             message="课程不存在",
             status_code=status.HTTP_404_NOT_FOUND,
         )
+    course_id = resolved_course_id
 
     # 2. 如果传了 chapter_id，确认章节存在
     if chapter_id:
