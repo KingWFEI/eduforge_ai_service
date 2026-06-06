@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -105,6 +105,8 @@ class CourseKnowledgeChunkListResponse(BaseModel):
 
 
 class CourseChapterCreate(BaseModel):
+    parent_id: Optional[str] = Field(None, description="父级章节ID；为空创建章，传章ID创建小节")
+    level: int = Field(1, description="层级：1=章，2=小节")
     title: str = Field(..., description="章节标题")
     sort_order: int = Field(0, description="章节排序")
     description: Optional[str] = Field(None, description="章节说明")
@@ -121,6 +123,8 @@ class CourseChapterCreateResponse(BaseModel):
 class CourseChapterItem(BaseModel):
     chapter_id: str = Field(..., description="章节ID")
     course_id: str = Field(..., description="课程ID")
+    parent_id: Optional[str] = Field(None, description="父级章节ID；为空表示章，不为空表示小节")
+    level: int = Field(1, description="层级：1=章，2=小节")
     title: str = Field(..., description="章节标题")
     description: Optional[str] = Field(None, description="章节说明")
     sort_order: int = Field(..., description="章节排序")
@@ -237,3 +241,38 @@ class VectorIndexRecordListResponse(BaseModel):
 
 class ReindexDocumentResponse(BaseModel):
     index_record: VectorIndexRecordItem
+
+
+class CourseStructureDraftGenerateRequest(BaseModel):
+    document_ids: Optional[List[str]] = Field(None, description="用于生成结构草稿的文档ID；为空表示使用该课程全部有效资料")
+
+
+class CourseStructureDraftUpdateRequest(BaseModel):
+    draft: dict[str, Any] = Field(..., description="教师编辑后的课程结构草稿")
+
+
+class CourseStructureDraftConfirmRequest(BaseModel):
+    draft: Optional[dict[str, Any]] = Field(None, description="可选；教师最终确认时提交的课程结构草稿")
+    rebuild_index: bool = Field(True, description="确认后是否按课程结构重建知识块和 Chroma 索引")
+
+
+class CourseStructureDraftResponse(BaseModel):
+    draft_id: str = Field(..., description="草稿ID")
+    course_id: str = Field(..., description="课程ID")
+    source_document_ids: List[str] = Field(default_factory=list, description="草稿来源文档ID")
+    draft: dict[str, Any] = Field(..., description="课程结构草稿")
+    status: str = Field(..., description="草稿状态")
+    created_at: Optional[str] = Field(None, description="创建时间")
+    updated_at: Optional[str] = Field(None, description="更新时间")
+    confirmed_at: Optional[str] = Field(None, description="确认时间")
+
+
+class CourseStructureConfirmResponse(BaseModel):
+    draft_id: str = Field(..., description="草稿ID")
+    course_id: str = Field(..., description="课程ID")
+    created_chapters: int = Field(..., description="新增章节数量")
+    created_sections: int = Field(..., description="新增小节数量")
+    created_knowledge_points: int = Field(..., description="新增知识点数量")
+    rebuilt_documents: int = Field(0, description="重建索引的文档数量")
+    rebuilt_chunks: int = Field(0, description="重建后的知识块数量")
+    status: str = Field(..., description="确认后的草稿状态")

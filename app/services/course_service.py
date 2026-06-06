@@ -338,6 +338,8 @@ def create_course_chapter(
     title: str,
     sort_order: int = 0,
     description: str | None = None,
+    parent_id: str | None = None,
+    level: int = 1,
 ) -> dict:
     """
     给指定课程新增章节。
@@ -371,12 +373,14 @@ def create_course_chapter(
             FROM course_chapters
             WHERE course_id = :course_id
               AND title = :title
+              AND ((parent_id IS NULL AND :parent_id IS NULL) OR parent_id = :parent_id)
             LIMIT 1
             """
         ),
         {
             "course_id": course_id,
             "title": title,
+            "parent_id": parent_id,
         },
     ).mappings().first()
 
@@ -396,6 +400,8 @@ def create_course_chapter(
             INSERT INTO course_chapters (
                 id,
                 course_id,
+                parent_id,
+                level,
                 title,
                 description,
                 sort_order,
@@ -405,6 +411,8 @@ def create_course_chapter(
             VALUES (
                 :id,
                 :course_id,
+                :parent_id,
+                :level,
                 :title,
                 :description,
                 :sort_order,
@@ -416,6 +424,8 @@ def create_course_chapter(
         {
             "id": chapter_id,
             "course_id": course_id,
+            "parent_id": parent_id,
+            "level": level,
             "title": title,
             "description": description,
             "sort_order": sort_order,
@@ -427,6 +437,8 @@ def create_course_chapter(
     return {
         "chapter_id": chapter_id,
         "course_id": course_id,
+        "parent_id": parent_id,
+        "level": level,
         "title": title,
         "sort_order": sort_order,
         "description": description,
@@ -468,6 +480,8 @@ def list_course_chapters(
             SELECT
                 id,
                 course_id,
+                parent_id,
+                level,
                 title,
                 description,
                 sort_order,
@@ -475,7 +489,7 @@ def list_course_chapters(
                 updated_at
             FROM course_chapters
             WHERE course_id = :course_id
-            ORDER BY sort_order ASC, created_at ASC
+            ORDER BY COALESCE(parent_id, id) ASC, level ASC, sort_order ASC, created_at ASC
             """
         ),
         {"course_id": course_id},
@@ -488,6 +502,8 @@ def list_course_chapters(
             {
                 "chapter_id": row["id"],
                 "course_id": row["course_id"],
+                "parent_id": row["parent_id"],
+                "level": row["level"],
                 "title": row["title"],
                 "description": row["description"],
                 "sort_order": row["sort_order"],
