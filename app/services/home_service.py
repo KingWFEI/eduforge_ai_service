@@ -1,246 +1,534 @@
-from __future__ import annotations
+import uuid
+from typing import Any, Dict, List, Optional, Union
 
-from typing import Any, Callable, TypeVar
-
-from sqlalchemy import func, or_
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.models.learning_profile import (
+    StudentDomainCompetency,
+    StudentLearningContext,
+    StudentLearningProfile,
+)
+
+# 注意：
+# 如果你的课程模型文件不是 app.models.course，
+# 后面报错时，把这里改成你真实的课程模型导入路径。
 from app.models.course import Course
-from app.models.evaluation import WeakPointRecord
-from app.models.exercise import ExerciseSubmission
-from app.models.learning_path import LearningPath, LearningPathTask
-from app.models.other import StudyRecord
-from app.models.resource_agent import LearningResource
-from app.models.learning_profile import StudentLearningProfile
-from app.models.user import User
-from app.schemas.home import HomeSummaryResponse
-
-T = TypeVar("T")
 
 
-def _safe(db: Session, query_fn: Callable[[], T], default: T) -> T:
+class HomeService:
     """
-    安全执行数据库查询。
+    阶段 3：首页课程服务。
 
-    阶段 3.1 的首页要先跑通；如果后续阶段的某张表暂时没建好、字段还没数据，
-    这里会回滚当前查询并返回默认值，避免整个首页接口 500。
+    主要负责：
+    1. 获取当前学生已选择课程列表。
+    2. 添加课程到首页。
+    3. 从首页移除课程。
+
+    当前版本基于三层画像模型：
+    - student_learning_profiles：综合学习画像
+    - student_learning_contexts：学生课程学习上下文
+    - student_domain_competencies：课程/领域能力画像
     """
-    try:
-        value = query_fn()
-        return default if value is None else value
-    except SQLAlchemyError:
-        db.rollback()
-        return default
 
+    def __init__(self, db: Session):
+        self.db = db
 
-def _normalize_progress(value: Any) -> float:
-    """把数据库里的进度统一转成 0~1。兼容 0.35 和 35 两种写法。"""
-    if value is None:
-        return 0.0
-    try:
-        progress = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if progress > 1:
-        progress = progress / 100
-    return round(max(0.0, min(progress, 1.0)), 2)
+    def get_home_courses(self, student_id: str) -> Dict[str, Any]:
+        """
+        获取学生首页课程列表。
 
+        数据来源：
+        - student_learning_contexts：学生已选择课程
+        - student_domain_competencies：课程薄弱点、掌握情况
+        - student_learning_profiles：综合学习偏好、可用时间
+        """
 
-def _normalize_accuracy(value: Any) -> float:
-    """把正确率统一转成 0~1。兼容 0.78 和 78 两种写法。"""
-    if value is None:
-        return 0.0
-    try:
-        accuracy = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if accuracy > 1:
-        accuracy = accuracy / 100
-    return round(max(0.0, min(accuracy, 1.0)), 2)
-
-
-def _json_list(value: Any) -> list[str]:
-    """把 JSON 字段安全转成字符串列表。"""
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if item not in (None, "")]
-    if isinstance(value, tuple):
-        return [str(item) for item in value if item not in (None, "")]
-    if isinstance(value, str):
-        return [value] if value else []
-    return []
-
-
-def _format_minutes(minutes: Any) -> str:
-    """把分钟数转成前端适合展示的文字。"""
-    if minutes is None:
-        return ""
-    try:
-        minutes_int = int(minutes)
-    except (TypeError, ValueError):
-        return ""
-    if minutes_int <= 0:
-        return ""
-    if minutes_int < 60:
-        return f"{minutes_int} 分钟"
-    hours = minutes_int // 60
-    rest = minutes_int % 60
-    if rest == 0:
-        return f"{hours} 小时"
-    return f"{hours} 小时 {rest} 分钟"
-
-
-def _student_id(current_user: User) -> str:
-    """
-    当前 users.id 是 int，但很多业务表 student_id 是 varchar。
-    查询业务表时统一转成字符串，兼容 student_id='1' 这种存法。
-    """
-    return str(current_user.id)
-
-
-def get_home_summary(db: Session, current_user: User) -> HomeSummaryResponse:
-    """阶段 3.1：生成 Flutter 学生首页摘要。"""
-    student_id = _student_id(current_user)
-    display_name = current_user.name or current_user.username or "同学"
-
-    profile = _safe(
-        db,
-        lambda: db.query(StudentLearningProfile)
-        .filter(StudentLearningProfile.student_id == student_id)
-        .order_by(StudentLearningProfile.last_updated.desc())
-        .first(),
-        None,
-    )
-
-    active_path = _safe(
-        db,
-        lambda: db.query(LearningPath)
-        .filter(LearningPath.student_id == student_id)
-        .filter(LearningPath.status == "active")
-        .order_by(LearningPath.created_at.desc())
-        .first(),
-        None,
-    )
-
-    target_course_id = active_path.course_id if active_path else None
-    course = (
-        _safe(
-            db,
-            lambda: db.query(Course).filter(Course.course_id == target_course_id).first(),
-            None,
+        contexts = (
+            self.db.query(StudentLearningContext)
+            .filter(
+                StudentLearningContext.student_id == student_id,
+                StudentLearningContext.status == "active",
+            )
+            .order_by(StudentLearningContext.updated_at.desc())
+            .all()
         )
-        if target_course_id
-        else None
-    )
-    target_course = course.name if course else ""
 
-    course_progress = _normalize_progress(active_path.progress if active_path else 0)
+        if not contexts:
+            return {
+                "selected_courses": [],
+                "max_home_display": 3,
+            }
 
-    today_task = None
-    if active_path:
-        today_task = _safe(
-            db,
-            lambda: db.query(LearningPathTask)
-            .filter(LearningPathTask.path_id == active_path.id)
-            .filter(LearningPathTask.status != "completed")
-            .order_by(LearningPathTask.day_no.asc(), LearningPathTask.created_at.asc())
-            .first(),
-            None,
+        learning_profile = (
+            self.db.query(StudentLearningProfile)
+            .filter(StudentLearningProfile.student_id == student_id)
+            .first()
         )
-        if today_task is None:
-            today_task = _safe(
-                db,
-                lambda: db.query(LearningPathTask)
-                .filter(LearningPathTask.path_id == active_path.id)
-                .order_by(LearningPathTask.day_no.desc(), LearningPathTask.created_at.desc())
-                .first(),
-                None,
+
+        selected_courses = []
+
+        for context in contexts:
+            competency = self._get_course_competency(
+                student_id=student_id,
+                course_id=context.course_id,
+                course_name=context.course_name,
             )
 
-    weak_points = _safe(
-        db,
-        lambda: [
-            row.knowledge_point
-            for row in db.query(WeakPointRecord)
-            .filter(WeakPointRecord.student_id == student_id)
-            .order_by(WeakPointRecord.wrong_count.desc(), WeakPointRecord.updated_at.desc())
-            .limit(3)
-            .all()
-        ],
-        [],
-    )
-    if not weak_points and profile:
-        weak_points = _json_list(profile.general_challenges_json)[:3]
+            course = self._get_course(context.course_id)
 
-    if today_task:
-        today_topic = today_task.topic or ""
-        today_estimated_time = _format_minutes(today_task.estimated_minutes)
-        today_progress = 1.0 if today_task.status == "completed" else 0.0
-    else:
-        first_weak = weak_points[0] if weak_points else ""
-        today_topic = f"复习：{first_weak}" if first_weak else ""
-        available_time = profile.available_time_json if profile else {}
-        today_estimated_time = (
-            available_time.get("description", "")
-            if isinstance(available_time, dict)
-            else ""
+            selected_courses.append(
+                {
+                    "course_id": self._display_course_id(context.course_id, course),
+                    "course_name": self._display_course_name(context, course),
+                    "progress": self._estimate_progress(context),
+                    "today_suggestion": self._build_today_suggestion(
+                        context=context,
+                        competency=competency,
+                        learning_profile=learning_profile,
+                    ),
+                    "today_topic": self._build_today_topic(
+                        context=context,
+                        competency=competency,
+                    ),
+                    "today_estimated_time": self._build_today_estimated_time(
+                        context=context,
+                        learning_profile=learning_profile,
+                    ),
+                    "study_hours": self._estimate_study_hours(context),
+                    "average_accuracy": self._estimate_average_accuracy(competency),
+                    "cover_color": self._get_course_cover_color(course),
+                    "last_study_at": context.updated_at or context.started_at,
+                }
+            )
+
+        return {
+            "selected_courses": selected_courses,
+            "max_home_display": 3,
+        }
+
+    def add_home_course(
+        self,
+        student_id: str,
+        course_id: Union[int, str],
+    ) -> Dict[str, Any]:
+        """
+        添加课程到学生首页。
+
+        逻辑：
+        1. 查课程是否存在。
+        2. 查 student_learning_contexts 是否已有记录。
+        3. 如果没有，创建 active 上下文。
+        4. 如果之前 removed，就恢复为 active。
+        """
+
+        course = self._get_course(course_id)
+
+        if not course:
+            raise ValueError("课程不存在")
+
+        course_status = getattr(course, "status", "active")
+
+        if course_status != "active":
+            raise ValueError("课程不可添加")
+
+        real_course_id = self._get_course_business_id(course)
+        course_name = self._get_course_name(course)
+
+        context = (
+            self.db.query(StudentLearningContext)
+            .filter(
+                StudentLearningContext.student_id == student_id,
+                StudentLearningContext.course_id == real_course_id,
+            )
+            .first()
         )
-        today_progress = 0.0
 
-    total_minutes = _safe(
-        db,
-        lambda: db.query(func.coalesce(func.sum(StudyRecord.study_minutes), 0))
-        .filter(StudyRecord.student_id == student_id)
-        .scalar(),
-        0,
-    )
-    study_hours = round(float(total_minutes or 0) / 60, 1)
+        if context:
+            context.status = "active"
+            context.course_name = course_name
+        else:
+            context = StudentLearningContext(
+                id="ctx_" + uuid.uuid4().hex[:12],
+                student_id=student_id,
+                course_id=real_course_id,
+                course_name=course_name,
+                learning_goals_json=[],
+                time_budget_json=None,
+                status="active",
+            )
+            self.db.add(context)
 
-    completed_tasks = _safe(
-        db,
-        lambda: db.query(func.count(LearningPathTask.id))
-        .join(LearningPath, LearningPathTask.path_id == LearningPath.id)
-        .filter(LearningPath.student_id == student_id)
-        .filter(LearningPathTask.status == "completed")
-        .scalar(),
-        0,
-    )
+        self.db.commit()
+        self.db.refresh(context)
 
-    average_accuracy = _safe(
-        db,
-        lambda: db.query(func.avg(ExerciseSubmission.accuracy))
-        .filter(ExerciseSubmission.student_id == student_id)
-        .scalar(),
-        0.0,
-    )
+        return {
+            "course_id": self._display_course_id(context.course_id, course),
+            "course_name": context.course_name,
+            "status": context.status,
+        }
 
-    recommend_query_course_id = target_course_id
+    def remove_home_course(
+        self,
+        student_id: str,
+        course_id: Union[int, str],
+    ) -> Dict[str, Any]:
+        """
+        从首页移除课程。
 
-    def _count_recommend_resources() -> int:
-        query = db.query(func.count(LearningResource.id)).filter(
-            or_(LearningResource.student_id == student_id, LearningResource.student_id.is_(None))
+        注意：
+        不删除课程本身。
+        只把 student_learning_contexts.status 改成 removed。
+        """
+
+        real_course_id = self._normalize_course_id(course_id)
+
+        context = (
+            self.db.query(StudentLearningContext)
+            .filter(
+                StudentLearningContext.student_id == student_id,
+                StudentLearningContext.course_id == real_course_id,
+            )
+            .first()
         )
-        if recommend_query_course_id:
-            query = query.filter(LearningResource.course_id == recommend_query_course_id)
-        query = query.filter(
-            LearningResource.review_status.in_(["pending", "auto_passed", "approved"])
+
+        # 如果用户传的是数字 ID，有可能 context.course_id 存的是课程业务 ID。
+        # 所以再尝试通过 Course 查一次真实 course_id。
+        if not context:
+            course = self._get_course(course_id)
+
+            if course:
+                real_course_id = self._get_course_business_id(course)
+
+                context = (
+                    self.db.query(StudentLearningContext)
+                    .filter(
+                        StudentLearningContext.student_id == student_id,
+                        StudentLearningContext.course_id == real_course_id,
+                    )
+                    .first()
+                )
+
+        if not context:
+            raise ValueError("当前学生未添加该课程")
+
+        context.status = "removed"
+
+        self.db.commit()
+        self.db.refresh(context)
+
+        return {
+            "course_id": course_id,
+            "status": context.status,
+        }
+
+    def _get_course_competency(
+        self,
+        student_id: str,
+        course_id: Optional[str],
+        course_name: Optional[str],
+    ) -> Optional[StudentDomainCompetency]:
+        """
+        获取某门课程对应的能力画像。
+
+        兼容：
+        - domain_type = course
+        - domain_id = course_id
+        - domain_name = course_name
+        """
+
+        query = self.db.query(StudentDomainCompetency).filter(
+            StudentDomainCompetency.student_id == student_id
         )
-        return int(query.scalar() or 0)
 
-    recommend_count = _safe(db, _count_recommend_resources, 0)
+        conditions = []
 
-    return HomeSummaryResponse(
-        greeting=f"你好，{display_name}",
-        target_course=target_course,
-        course_progress=course_progress,
-        today_topic=today_topic,
-        today_estimated_time=today_estimated_time,
-        today_progress=_normalize_progress(today_progress),
-        study_hours=study_hours,
-        completed_tasks=int(completed_tasks or 0),
-        average_accuracy=_normalize_accuracy(average_accuracy),
-        weak_points=weak_points,
-        recommend_count=int(recommend_count or 0),
-    )
+        if course_id:
+            conditions.append(StudentDomainCompetency.domain_id == course_id)
+
+        if course_name:
+            conditions.append(StudentDomainCompetency.domain_name == course_name)
+
+        conditions.append(StudentDomainCompetency.domain_type == "course")
+        conditions.append(StudentDomainCompetency.domain_type == "课程")
+
+        return (
+            query.filter(or_(*conditions))
+            .order_by(StudentDomainCompetency.last_updated.desc())
+            .first()
+        )
+
+    def _get_course(self, course_id: Union[int, str]):
+        """
+        兼容查询课程。
+
+        你的项目里 course_id 可能是：
+        - 数字 id
+        - 字符串 course_id，例如 course_ai_basic
+        """
+
+        course_id_str = str(course_id)
+
+        # 1. 优先按 Course.course_id 查
+        if hasattr(Course, "course_id"):
+            course = (
+                self.db.query(Course)
+                .filter(Course.course_id == course_id_str)
+                .first()
+            )
+
+            if course:
+                return course
+
+        # 2. 如果传的是数字，再按 Course.id 查
+        if course_id_str.isdigit() and hasattr(Course, "id"):
+            course = (
+                self.db.query(Course)
+                .filter(Course.id == int(course_id_str))
+                .first()
+            )
+
+            if course:
+                return course
+
+        return None
+
+    def _normalize_course_id(self, course_id: Union[int, str]) -> str:
+        return str(course_id)
+
+    def _get_course_business_id(self, course) -> str:
+        """
+        获取课程业务 ID。
+
+        优先使用 course.course_id。
+        如果没有，就使用 id。
+        """
+
+        if hasattr(course, "course_id") and getattr(course, "course_id"):
+            return str(getattr(course, "course_id"))
+
+        return str(getattr(course, "id"))
+
+    def _get_course_name(self, course) -> str:
+        """
+        获取课程名称。
+
+        兼容 name / course_name 两种字段。
+        """
+
+        if hasattr(course, "name") and getattr(course, "name"):
+            return getattr(course, "name")
+
+        if hasattr(course, "course_name") and getattr(course, "course_name"):
+            return getattr(course, "course_name")
+
+        return "未命名课程"
+
+    def _display_course_id(self, context_course_id: Optional[str], course):
+        """
+        首页返回给前端的 course_id。
+
+        如果 Course 有数字 id，优先返回数字 id，贴合新版阶段 3 文档。
+        如果没有，就返回字符串 course_id。
+        """
+
+        if course and hasattr(course, "id") and getattr(course, "id") is not None:
+            return getattr(course, "id")
+
+        return context_course_id
+
+    def _display_course_name(self, context: StudentLearningContext, course) -> str:
+        if context.course_name:
+            return context.course_name
+
+        if course:
+            return self._get_course_name(course)
+
+        return "未命名课程"
+
+    def _estimate_progress(self, context: StudentLearningContext) -> float:
+        """
+        估算课程进度。
+
+        当前 student_learning_contexts 没有 progress 字段，
+        所以先根据 status 做最小可运行估算。
+
+        后面如果你增加学习记录或学习路径表，
+        再把这里替换成真实进度计算。
+        """
+
+        if context.status == "completed":
+            return 1.0
+
+        if context.status == "active":
+            return 0.0
+
+        return 0.0
+
+    def _build_today_topic(
+        self,
+        context: StudentLearningContext,
+        competency: Optional[StudentDomainCompetency],
+    ) -> Optional[str]:
+        """
+        生成今日主题。
+
+        优先从课程能力画像的薄弱点中取第一个。
+        """
+
+        weaknesses = []
+
+        if competency and competency.weaknesses_json:
+            weaknesses = competency.weaknesses_json
+
+        if isinstance(weaknesses, list) and len(weaknesses) > 0:
+            return weaknesses[0]
+
+        if context.course_name:
+            return context.course_name
+
+        return None
+
+    def _build_today_suggestion(
+        self,
+        context: StudentLearningContext,
+        competency: Optional[StudentDomainCompetency],
+        learning_profile: Optional[StudentLearningProfile],
+    ) -> str:
+        """
+        生成今日学习建议。
+
+        优先根据薄弱点生成。
+        """
+
+        topic = self._build_today_topic(context, competency)
+
+        if topic:
+            preferences = []
+
+            if learning_profile and learning_profile.learning_preferences_json:
+                preferences = learning_profile.learning_preferences_json
+
+            if isinstance(preferences, list) and "图解讲解" in preferences:
+                return f"先用图解方式复习“{topic}”，再完成基础练习。"
+
+            if isinstance(preferences, list) and "代码案例" in preferences:
+                return f"先完成“{topic}”相关代码案例，再做练习巩固。"
+
+            return f"今天建议先学习“{topic}”。"
+
+        return "今天建议先完成当前课程的基础学习任务。"
+
+    def _build_today_estimated_time(
+        self,
+        context: StudentLearningContext,
+        learning_profile: Optional[StudentLearningProfile],
+    ) -> Optional[str]:
+        """
+        生成今日预计学习时间。
+
+        优先使用课程上下文 time_budget_json，
+        其次使用综合画像 available_time_json。
+        """
+
+        context_time = self._extract_time_budget(context.time_budget_json)
+
+        if context_time:
+            return context_time
+
+        if learning_profile:
+            profile_time = self._extract_time_budget(
+                learning_profile.available_time_json
+            )
+
+            if profile_time:
+                return profile_time
+
+        return "30 分钟"
+
+    def _extract_time_budget(self, value) -> Optional[str]:
+        """
+        兼容不同 JSON 格式的时间预算。
+
+        支持：
+        "每天 45 分钟"
+        {"daily_minutes": 45}
+        {"text": "每天 45 分钟"}
+        {"label": "45 分钟"}
+        """
+
+        if not value:
+            return None
+
+        if isinstance(value, str):
+            return value.replace("每天", "").strip()
+
+        if isinstance(value, dict):
+            if value.get("daily_minutes"):
+                return f"{value.get('daily_minutes')} 分钟"
+
+            if value.get("text"):
+                return str(value.get("text")).replace("每天", "").strip()
+
+            if value.get("label"):
+                return str(value.get("label")).replace("每天", "").strip()
+
+        return None
+
+    def _estimate_study_hours(self, context: StudentLearningContext) -> float:
+        """
+        当前表里没有 study_hours 字段，先返回 0。
+        后续接学习记录表后再真实统计。
+        """
+
+        return 0.0
+
+    def _estimate_average_accuracy(
+        self,
+        competency: Optional[StudentDomainCompetency],
+    ) -> float:
+        """
+        估算当前课程平均正确率。
+
+        当前没有练习提交统计时，
+        先根据 competency.confidence 或 competency_level 给一个展示值。
+        """
+
+        if not competency:
+            return 0.0
+
+        if competency.confidence is not None:
+            value = float(competency.confidence)
+
+            if value > 1:
+                value = value / 100
+
+            return round(max(0.0, min(value, 1.0)), 2)
+
+        level = competency.competency_level or ""
+
+        if level in ["较好", "熟练", "advanced"]:
+            return 0.85
+
+        if level in ["一般", "中等", "normal"]:
+            return 0.7
+
+        if level in ["较弱", "入门", "beginner", "weak"]:
+            return 0.5
+
+        return 0.0
+
+    def _get_course_cover_color(self, course) -> Optional[str]:
+        """
+        获取课程卡片颜色。
+
+        如果课程表没有 cover_color 字段，则返回默认颜色。
+        """
+
+        if course and hasattr(course, "cover_color"):
+            color = getattr(course, "cover_color")
+
+            if color:
+                return color
+
+        return "#625BFF"
