@@ -16,6 +16,11 @@ from app.models.evaluation import EvaluationReport, MasteryRecord, WeakPointReco
 from app.models.other import StudyRecord, UserNotification, DashboardDailyStat, SystemSetting, PromptTemplate
 from app.models.profile_dialogue_messages import ProfileDialogueMessage
 from app.models.profile_dialogue_sessions import ProfileDialogueSession
+from app.models.column_comments import apply_column_comments
+from app.db.base import Base
+
+
+apply_column_comments(Base.metadata)
 
 
 __all__ = [
