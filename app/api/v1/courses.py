@@ -65,7 +65,6 @@ def get_courses(
         )
     )
 
-
 @router.get("/{course_id}", response_model=ApiResponse[CourseResponse])
 def get_course(
     course_id: str,
