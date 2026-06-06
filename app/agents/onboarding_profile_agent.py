@@ -1,6 +1,7 @@
 # app/agents/onboarding_profile_agent.py
 
 from app.agents.base import BaseAgent
+from app.services.llm_service import LLMService
 from app.skills.profile_generation_skill import ProfileGenerationSkill
 
 
@@ -13,6 +14,9 @@ class OnboardingProfileAgent(BaseAgent):
     """
 
     name = "Onboarding Profile Agent"
+
+    def __init__(self, llm_service=None):
+        super().__init__(llm_service or LLMService())
 
     def run(self, context):
         """同步执行 Agent（内部 DeepSeek 调用是同步的）"""
