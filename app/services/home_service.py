@@ -218,7 +218,7 @@ class HomeService:
         self.db.refresh(context)
 
         return {
-            "course_id": course_id,
+            "course_id": context.course_id,
             "status": context.status,
         }
 
@@ -325,15 +325,8 @@ class HomeService:
         return "未命名课程"
 
     def _display_course_id(self, context_course_id: Optional[str], course):
-        """
-        首页返回给前端的 course_id。
-
-        如果 Course 有数字 id，优先返回数字 id，贴合新版阶段 3 文档。
-        如果没有，就返回字符串 course_id。
-        """
-
-        if course and hasattr(course, "id") and getattr(course, "id") is not None:
-            return getattr(course, "id")
+        if course and hasattr(course, "course_id") and getattr(course, "course_id"):
+            return getattr(course, "course_id")
 
         return context_course_id
 

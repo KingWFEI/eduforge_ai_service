@@ -5,7 +5,10 @@ from typing import Union
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.constants.role import Role
+from app.core.dependencies import require_role
 from app.db.session import get_db
+from app.models import User
 from app.schemas.home import AddHomeCourseRequest
 from app.services.home_service import HomeService
 
@@ -13,26 +16,18 @@ from app.services.home_service import HomeService
 router = APIRouter(prefix="/api/home", tags=["阶段3-首页课程"])
 
 
-def get_current_student_id() -> str:
-    """
-    获取当前登录学生 ID。
-
-    当前小白阶段先写死 u_demo。
-    后面接 JWT 登录后，再从 token 里解析真实 student_id。
-    """
-
-    return "u_demo"
-
-
 @router.get("/courses")
-def get_home_courses(db: Session = Depends(get_db)):
+def get_home_courses(
+        db: Session = Depends(get_db),
+        current_user: User = Depends(require_role(Role.STUDENT)),
+):
     """
-    阶段 3.1：获取学生首页课程概览。
+    阶段 3.1：获取学生已经选择的课程。
 
     Flutter 首页初始化时调用。
     """
 
-    student_id = get_current_student_id()
+    student_id = current_user.id
 
     service = HomeService(db)
 
@@ -48,15 +43,16 @@ def get_home_courses(db: Session = Depends(get_db)):
 @router.post("/courses")
 def add_home_course(
     req: AddHomeCourseRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT)),
 ):
     """
     阶段 3.3：添加课程到学生首页。
 
-    Flutter 课程选择页点击“添加课程”时调用。
+    Flutter 课程选择页点击"添加课程"时调用。
     """
 
-    student_id = get_current_student_id()
+    student_id = current_user.id
 
     service = HomeService(db)
 
@@ -99,7 +95,8 @@ def add_home_course(
 @router.delete("/courses/{course_id}")
 def remove_home_course(
     course_id: Union[int, str],
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT)),
 ):
     """
     阶段 3.4：从学生首页移除课程。
@@ -109,7 +106,7 @@ def remove_home_course(
     不删除课程本身。
     """
 
-    student_id = get_current_student_id()
+    student_id = current_user.id
 
     service = HomeService(db)
 
