@@ -1,4 +1,5 @@
 import uuid
+import json
 from fastapi import status
 
 from app.utils.response import AppException, ErrorCode
@@ -60,6 +61,34 @@ def get_recommended_resources(db: Session, current_user: User) -> dict:
         "total": len(items),
     }
 
+
+def parse_json_field(value, default=None):
+    """
+    把数据库里的 JSON 字段转换成 Python dict/list。
+    """
+
+    if default is None:
+        default = {}
+
+    if value is None:
+        return default
+
+    if isinstance(value, (dict, list)):
+        return value
+
+    if isinstance(value, str):
+        if value.strip() == "":
+            return default
+
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return {
+                "raw": value
+            }
+
+    return value
+
 def get_resource_detail(db: Session, current_user: User, resource_id: str) -> dict:
     """
     阶段 3.4：获取资源详情。
@@ -120,7 +149,7 @@ def get_resource_detail(db: Session, current_user: User, resource_id: str) -> di
         "description": row["description"],
         "reason": row["reason"],
         "content_text": row["content_text"],
-        "content_json": row["content_json"],
+        "content_json": parse_json_field(row["content_json"], default={}),
         "review_status": row["review_status"],
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,

@@ -62,3 +62,40 @@ class ResourceViewResponse(BaseModel):
     study_record_id: str = Field(..., description="学习记录ID")
     study_minutes_added: int = Field(..., description="本次新增学习分钟数")
     action_type: str = Field(..., description="学习行为类型")
+
+# ─── 阶段 4：资源生成任务 ─────────────────────────────
+
+class GenerateResourceRequest(BaseModel):
+    course_id: str = Field(..., description="课程 ID")
+    knowledge_point: str = Field(..., description="知识点名称")
+    goal: str = Field(..., description="学习目标")
+    resource_types: List[str] = Field(..., description="资源类型：document / mind_map / exercise / code_case / video_script")
+    difficulty: str = Field("基础", description="难度：基础 / 中等 / 提高")
+    use_profile: bool = Field(True, description="是否结合学生画像")
+
+
+class GenerateResourceTaskResponse(BaseModel):
+    task_id: str = Field(..., description="资源生成任务 ID")
+    status: str = Field(..., description="任务状态")
+    progress: int = Field(..., description="任务进度")
+    message: str = Field(..., description="提示信息")
+
+
+class ResourceTaskStepItem(BaseModel):
+    agent_name: str = Field(..., description="智能体名称")
+    step_order: int = Field(..., description="步骤顺序")
+    status: str = Field(..., description="步骤状态")
+    input_summary: Optional[str] = Field(None, description="输入摘要")
+    output_summary: Optional[str] = Field(None, description="输出摘要")
+    duration_ms: Optional[int] = Field(None, description="耗时")
+
+
+class ResourceTaskDetailResponse(BaseModel):
+    task_id: str = Field(..., description="资源生成任务 ID")
+    status: str = Field(..., description="任务状态")
+    progress: int = Field(..., description="任务进度")
+    current_step: Optional[str] = Field(None, description="当前步骤")
+    resource_ids: List[str] = Field(default_factory=list, description="生成的资源 ID")
+    agent_task_id: Optional[str] = Field(None, description="智能体任务 ID")
+    steps: List[ResourceTaskStepItem] = Field(default_factory=list, description="智能体执行步骤")
+    error_message: Optional[str] = Field(None, description="错误信息")
