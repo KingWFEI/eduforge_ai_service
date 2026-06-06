@@ -105,8 +105,6 @@ class CourseKnowledgeChunkListResponse(BaseModel):
 
 
 class CourseChapterCreate(BaseModel):
-    parent_id: Optional[str] = Field(None, description="父级章节ID；为空创建章，传章ID创建小节")
-    level: int = Field(1, description="层级：1=章，2=小节")
     title: str = Field(..., description="章节标题")
     sort_order: int = Field(0, description="章节排序")
     description: Optional[str] = Field(None, description="章节说明")
@@ -123,8 +121,6 @@ class CourseChapterCreateResponse(BaseModel):
 class CourseChapterItem(BaseModel):
     chapter_id: str = Field(..., description="章节ID")
     course_id: str = Field(..., description="课程ID")
-    parent_id: Optional[str] = Field(None, description="父级章节ID；为空表示章，不为空表示小节")
-    level: int = Field(1, description="层级：1=章，2=小节")
     title: str = Field(..., description="章节标题")
     description: Optional[str] = Field(None, description="章节说明")
     sort_order: int = Field(..., description="章节排序")
@@ -242,6 +238,37 @@ class VectorIndexRecordListResponse(BaseModel):
 class ReindexDocumentResponse(BaseModel):
     index_record: VectorIndexRecordItem
 
+class CreateCourseChapterRequest(BaseModel):
+    """
+    新增课程章节请求体。
+    """
+
+    title: str = Field(..., min_length=1, max_length=200, description="章节标题")
+    description: Optional[str] = Field(default=None, description="章节描述")
+    sort_order: Optional[int] = Field(default=0, description="章节排序")
+
+
+class CourseChapterData(BaseModel):
+    """
+    新增课程章节返回数据。
+    """
+
+    chapter_id: str
+    course_id: str
+    title: str
+    description: Optional[str] = None
+    sort_order: int = 0
+
+class CreateKnowledgePointRequest(BaseModel):
+    """
+    新增知识点请求体。
+    """
+
+    name: str = Field(..., min_length=1, max_length=100, description="知识点名称")
+    description: Optional[str] = Field(default=None, description="知识点描述")
+    difficulty: Optional[str] = Field(default="基础", description="难度")
+    prerequisites: Optional[List[str]] = Field(default_factory=list, description="前置知识")
+    sort_order: Optional[int] = Field(default=0, description="排序")
 
 class CourseStructureDraftGenerateRequest(BaseModel):
     document_ids: Optional[List[str]] = Field(None, description="用于生成结构草稿的文档ID；为空表示使用该课程全部有效资料")
