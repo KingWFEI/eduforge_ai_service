@@ -6,7 +6,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.utils.response import AppException, ErrorCode
-from app.services.rag_service import delete_document_chunks_from_chroma, update_document_chunks_metadata_in_chroma
+from app.services.rag_service import (
+    delete_document_chunks_from_chroma,
+    rebuild_course_document_index_with_structure,
+    update_document_chunks_metadata_in_chroma,
+)
 
 def list_course_documents(
     db: Session,
@@ -162,6 +166,8 @@ def list_course_knowledge_chunks(
                 kc.course_id,
                 kc.chapter_id,
                 cc.title AS chapter,
+                kc.knowledge_point_id,
+                kp.name AS knowledge_point,
                 kc.section,
                 kc.content,
                 kc.keywords_json,
@@ -172,6 +178,7 @@ def list_course_knowledge_chunks(
             FROM knowledge_chunks kc
             LEFT JOIN course_documents cd ON cd.id = kc.document_id
             LEFT JOIN course_chapters cc ON cc.id = kc.chapter_id
+            LEFT JOIN knowledge_points kp ON kp.id = kc.knowledge_point_id
             WHERE {where_sql}
             ORDER BY kc.document_id ASC, kc.chunk_index ASC
             LIMIT :limit OFFSET :offset
@@ -197,6 +204,8 @@ def list_course_knowledge_chunks(
                 "course_id": row["course_id"],
                 "chapter_id": row["chapter_id"],
                 "chapter": row["chapter"],
+                "knowledge_point_id": row["knowledge_point_id"],
+                "knowledge_point": row["knowledge_point"],
                 "section": row["section"],
                 "content": row["content"],
                 "keywords": keywords if isinstance(keywords, list) else [],
@@ -1121,6 +1130,63 @@ def list_vector_index_records(
     }
 
 
+def _format_vector_index_record(row) -> dict:
+    return {
+        "index_record_id": row["id"],
+        "course_id": row["course_id"],
+        "document_id": row["document_id"],
+        "filename": row["filename"],
+        "index_type": row["index_type"],
+        "collection_name": row["collection_name"],
+        "status": row["status"],
+        "chunk_count": row["chunk_count"] or 0,
+        "success_count": row["success_count"] or 0,
+        "failed_count": row["failed_count"] or 0,
+        "error_message": row["error_message"],
+        "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+        "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+        "created_by": row["created_by"],
+    }
+
+
+def get_vector_index_record(db: Session, index_record_id: str) -> dict:
+    row = db.execute(
+        text(
+            """
+            SELECT
+                vir.id,
+                vir.course_id,
+                vir.document_id,
+                cd.filename,
+                vir.index_type,
+                vir.collection_name,
+                vir.status,
+                vir.chunk_count,
+                vir.success_count,
+                vir.failed_count,
+                vir.error_message,
+                vir.started_at,
+                vir.finished_at,
+                vir.created_by
+            FROM vector_index_records vir
+            LEFT JOIN course_documents cd ON cd.id = vir.document_id
+            WHERE vir.id = :index_record_id
+            LIMIT 1
+            """
+        ),
+        {"index_record_id": index_record_id},
+    ).mappings().first()
+
+    if row is None:
+        raise AppException(
+            code=ErrorCode.NOT_FOUND,
+            message="索引记录不存在",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    return _format_vector_index_record(row)
+
+
 def reindex_course_document(
     db: Session,
     course_id: str,
@@ -1155,21 +1221,15 @@ def reindex_course_document(
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
-    # 2. 调用你已有的上传/索引逻辑
-    # 这里复用现有方法 upload_and_index_course_document
-    # 需要传 file_path、filename、course_id、uploaded_by
-    from app.services.rag_service import upload_and_index_course_document
-
-    index_record = upload_and_index_course_document(
+    index_record = rebuild_course_document_index_with_structure(
         db=db,
         course_id=course_id,
-        file_path=doc["file_path"],
-        filename=doc["filename"],
-        uploaded_by=created_by,
-        reindex=True,  # 标记为重建索引
+        document_id=document_id,
+        created_by=created_by,
     )
+    db.commit()
 
-    return index_record
+    return get_vector_index_record(db, index_record["index_record_id"])
 
 
 def delete_course_document_and_chunks(

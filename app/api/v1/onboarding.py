@@ -166,8 +166,9 @@ async def submit_onboarding(
 @router.get("/profile", response_model=ApiResponse[ProfileQueryData])
 def get_profile_result(
     submission_id: Optional[str] = Query(None, description="问卷提交记录 ID"),
+    student_id: Optional[str] = Query(None, description="管理员查询时指定学生 ID"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(Role.STUDENT)),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.ADMIN)),
 ):
     """
     查询问卷画像分析结果。
@@ -176,11 +177,39 @@ def get_profile_result(
     1. submission_id 指定查询某次提交
     2. 不传则查询当前学生最新画像
     """
-    student_id = str(current_user.id)
+    if current_user.role == Role.ADMIN.value:
+        if not student_id:
+            raise AppException(
+                code=ErrorCode.PARAM_ERROR,
+                message="管理员查询学生画像时必须传 student_id",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if not student_id.isdigit():
+            raise AppException(
+                code=ErrorCode.PARAM_ERROR,
+                message="student_id 必须是学生用户 ID",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        target_student = (
+            db.query(User)
+            .filter(User.id == int(student_id))
+            .first()
+        )
+        if target_student is None or target_student.role != Role.STUDENT.value:
+            raise AppException(
+                code=ErrorCode.NOT_FOUND,
+                message="学生不存在",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        target_user_id = target_student.id
+        target_student_id = str(target_student.id)
+    else:
+        target_user_id = current_user.id
+        target_student_id = str(current_user.id)
 
     # 查找 analysis 记录
     query = db.query(ProfileAnalysis).filter(
-        ProfileAnalysis.student_id == student_id,
+        ProfileAnalysis.student_id == target_student_id,
     )
 
     if submission_id:
@@ -199,10 +228,26 @@ def get_profile_result(
             .first()
         )
         if analysis is None:
-            raise AppException(
-                code=ErrorCode.NOT_FOUND,
-                message="暂未找到画像分析记录",
-                status_code=status.HTTP_404_NOT_FOUND,
+            onboarding_status = (
+                db.query(UserOnboardingStatus)
+                .filter(UserOnboardingStatus.user_id == target_user_id)
+                .first()
+            )
+            empty_status = onboarding_status.status if onboarding_status else "not_started"
+            current_step = "用户已跳过引导问卷，暂无画像" if empty_status == "skipped" else "暂无画像分析记录"
+            return success(
+                ProfileQueryData(
+                    submission_id=onboarding_status.submission_id if onboarding_status else None,
+                    analysis_id=None,
+                    status=empty_status,
+                    progress=0,
+                    current_step=current_step,
+                    agent_trace=None,
+                    profile=None,
+                    analysis=None,
+                    error=None,
+                ),
+                message=current_step,
             )
 
     # 构建 agent_trace
@@ -267,7 +312,7 @@ def get_profile_result(
     status_msg_map = {
         "pending": "画像分析任务等待处理中",
         "processing": "画像分析中",
-        "completed": "学习画像生成成功",
+        "completed": "获取学习画像成功",
         "failed": "画像分析失败",
     }
 

@@ -7,13 +7,7 @@ from app.models.course_structure import KnowledgeChunk, KnowledgePoint
 
 
 class KnowledgeAgent(BaseAgent):
-    """
-    知识检索智能体。
-
-    作用：
-    根据 course_id 和 knowledge_point 从 knowledge_chunks 中取相关知识块。
-    如果暂时没有知识块，则返回兜底知识。
-    """
+    """Retrieve real course chunks for resource generation."""
 
     name = "Knowledge Agent"
 
@@ -22,7 +16,36 @@ class KnowledgeAgent(BaseAgent):
         course_id = input_data["course_id"]
         knowledge_point = input_data.get("knowledge_point") or ""
 
-        kp = (
+        kp = self._find_knowledge_point(db, course_id, knowledge_point)
+        chunks = self._load_chunks(db, course_id, knowledge_point, kp)
+
+        knowledge_chunks: List[Dict[str, Any]] = []
+        for chunk in chunks:
+            knowledge_chunks.append({
+                "chunk_id": chunk.id,
+                "content": chunk.content,
+                "section": chunk.section,
+                "page_no": chunk.page_no,
+                "chapter_id": chunk.chapter_id,
+                "knowledge_point_id": chunk.knowledge_point_id,
+            })
+
+        if not knowledge_chunks:
+            raise RuntimeError(
+                "未找到真实课程知识块，请先上传课程资料，确认 AI 识别出的章节和知识点，并重建索引后再生成学习资源。"
+            )
+
+        return {
+            "knowledge_point_id": kp.id if kp else None,
+            "knowledge_chunks": knowledge_chunks,
+            "summary": f"已检索到 {len(knowledge_chunks)} 个真实知识片段",
+        }
+
+    def _find_knowledge_point(self, db, course_id: str, knowledge_point: str):
+        if not knowledge_point:
+            return None
+
+        exact = (
             db.query(KnowledgePoint)
             .filter(
                 KnowledgePoint.course_id == course_id,
@@ -30,53 +53,73 @@ class KnowledgeAgent(BaseAgent):
             )
             .first()
         )
+        if exact is not None:
+            return exact
 
-        query = db.query(KnowledgeChunk).filter(
+        return (
+            db.query(KnowledgePoint)
+            .filter(
+                KnowledgePoint.course_id == course_id,
+                KnowledgePoint.name.contains(knowledge_point),
+            )
+            .first()
+        )
+
+    def _load_chunks(
+        self,
+        db,
+        course_id: str,
+        knowledge_point: str,
+        kp,
+    ) -> list[KnowledgeChunk]:
+        base_query = db.query(KnowledgeChunk).filter(
             KnowledgeChunk.course_id == course_id,
             KnowledgeChunk.deleted.is_(False),
         )
 
         if kp:
-            query = query.filter(KnowledgeChunk.knowledge_point_id == kp.id)
-        elif knowledge_point:
-            query = query.filter(
-                or_(
-                    KnowledgeChunk.content.contains(knowledge_point),
-                    KnowledgeChunk.section.contains(knowledge_point),
+            chunks = self._limit(
+                base_query.filter(KnowledgeChunk.knowledge_point_id == kp.id)
+            )
+            if chunks:
+                return chunks
+
+            chunks = self._limit(
+                base_query.filter(
+                    or_(
+                        KnowledgeChunk.content.contains(kp.name),
+                        KnowledgeChunk.section.contains(kp.name),
+                    )
                 )
             )
+            if chunks:
+                return chunks
 
-        chunks = (
+            if kp.chapter_id:
+                chunks = self._limit(
+                    base_query.filter(KnowledgeChunk.chapter_id == kp.chapter_id)
+                )
+                if chunks:
+                    return chunks
+
+        if knowledge_point:
+            chunks = self._limit(
+                base_query.filter(
+                    or_(
+                        KnowledgeChunk.content.contains(knowledge_point),
+                        KnowledgeChunk.section.contains(knowledge_point),
+                    )
+                )
+            )
+            if chunks:
+                return chunks
+
+        return self._limit(base_query)
+
+    def _limit(self, query) -> list[KnowledgeChunk]:
+        return (
             query
             .order_by(KnowledgeChunk.chunk_index.asc())
             .limit(5)
             .all()
         )
-
-        knowledge_chunks: List[Dict[str, Any]] = []
-
-        for chunk in chunks:
-            knowledge_chunks.append({
-                "chunk_id": chunk.id,
-                "content": chunk.content,
-                "section": chunk.section,
-                "page_no": chunk.page_no,
-                "knowledge_point_id": chunk.knowledge_point_id,
-            })
-
-        if not knowledge_chunks:
-            knowledge_chunks = [
-                {
-                    "chunk_id": "fallback_001",
-                    "content": f"{knowledge_point} 是当前学习主题。系统会结合学生画像，用更适合初学者的方式生成图解、练习、导图和代码案例。",
-                    "section": "系统兜底知识",
-                    "page_no": None,
-                    "knowledge_point_id": kp.id if kp else None,
-                }
-            ]
-
-        return {
-            "knowledge_point_id": kp.id if kp else None,
-            "knowledge_chunks": knowledge_chunks,
-            "summary": f"已检索到 {len(knowledge_chunks)} 个知识片段"
-        }

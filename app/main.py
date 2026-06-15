@@ -1,31 +1,122 @@
 import os
 import time
+from typing import Any
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import OperationalError
+from starlette.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api.v1 import admin_onboarding, admin_users, auth, courses, onboarding, users, home, learning_path, profile, \
-    resources, profile_dialogue, knowledge
+from app.api.v1 import (
+    agent_tasks,
+    admin_learning_style_characters,
+    admin_onboarding,
+    admin_users,
+    auth,
+    courses,
+    dashboard,
+    evaluation,
+    exercise,
+    home,
+    knowledge,
+    learning_path,
+    onboarding,
+    profile,
+    profile_dialogue,
+    resources,
+    settings,
+    student_learning_style,
+    students,
+    users,
+)
 from app.utils.logging_config import setup_logging
 from app.utils.response import AppException, ErrorCode, fail, success
 
-# 配置日志
+# Configure logging
 logger = setup_logging()
 KNOWLEDGE_UPLOAD_MAX_MB = int(os.getenv("KNOWLEDGE_UPLOAD_MAX_MB", "50"))
 KNOWLEDGE_UPLOAD_MAX_BYTES = KNOWLEDGE_UPLOAD_MAX_MB * 1024 * 1024
 
-# 创建 FastAPI 应用实例
+
+def _request_context(request: Request, request_id: str) -> dict[str, Any]:
+    return {
+        "request_id": request_id,
+        "path": request.url.path,
+        "method": request.method,
+        "query": str(request.url.query) or None,
+        "client": request.client.host if request.client else None,
+    }
+
+
+def _validation_error_hint(error: dict[str, Any]) -> str:
+    location = error.get("loc") or []
+    field = ".".join(str(item) for item in location if item not in ("body", "query", "path"))
+    message = error.get("msg") or "Invalid parameter format"
+    if field:
+        return f"Check parameter {field}: {message}"
+    return f"Check request parameters: {message}"
+
+
+def _format_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    formatted_errors = []
+    for error in errors:
+        location = error.get("loc") or []
+        formatted_errors.append(
+            {
+                "location": list(location),
+                "field": ".".join(str(item) for item in location if item not in ("body", "query", "path")) or None,
+                "message": error.get("msg"),
+                "type": error.get("type"),
+                "hint": _validation_error_hint(error),
+            }
+        )
+    return formatted_errors
+
+
+def _http_error_message_and_hint(
+    request: Request,
+    exc: StarletteHTTPException,
+    allowed_methods: list[str],
+) -> tuple[str, str]:
+    if exc.status_code == status.HTTP_400_BAD_REQUEST:
+        return f"Bad request: {exc.detail}", "Check parameters, JSON format, and Content-Type"
+    if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+        return f"Unauthorized or login expired: {exc.detail}", "Login again and send a valid Authorization token"
+    if exc.status_code == status.HTTP_403_FORBIDDEN:
+        return f"Forbidden: {exc.detail}", "Check whether the current user role can call this API"
+    if exc.status_code == status.HTTP_404_NOT_FOUND:
+        return f"API or resource not found: {request.method} {request.url.path}", "Check the URL, path parameters, or resource ID"
+    if exc.status_code == status.HTTP_405_METHOD_NOT_ALLOWED:
+        allowed_text = ", ".join(allowed_methods) if allowed_methods else "the methods defined by this API"
+        message = f"Method not allowed: {request.method} {request.url.path}. Allowed methods: {allowed_text}"
+        hint = "Use one of the allowed HTTP methods shown in allowed_methods"
+        if request.url.path.endswith("/upload") and "POST" in allowed_methods:
+            hint = "This is an upload API. Do not open it with GET in the browser address bar; use POST + multipart/form-data"
+        return message, hint
+    if exc.status_code == status.HTTP_409_CONFLICT:
+        return f"Conflict: {exc.detail}", "Check for duplicate creation, invalid state transition, or concurrent modification"
+    if exc.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE:
+        return f"Request body too large: {exc.detail}", "Compress or split the file, or increase the upload size limit"
+    if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        return f"Too many requests: {exc.detail}", "Retry later or reduce request frequency"
+    return f"HTTP request failed: {exc.detail}", "Check status_code, path, method, and request format"
+
+# Create FastAPI app
 app = FastAPI(
     title="FastAPI Demo Backend",
     description="FastAPI demo backend service",
     version="0.4.0",
     debug=True
 )
+os.makedirs("uploads", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
-    """HTTP 请求日志中间件：记录请求耗时、来源 IP 和状态"""
+    """Log request duration, client IP, and status."""
     start_time = time.perf_counter()
     client_host = request.client.host if request.client else "-"
 
@@ -46,8 +137,14 @@ async def request_logging_middleware(request: Request, call_next):
             )
             return fail(
                 code=ErrorCode.PAYLOAD_TOO_LARGE,
-                message=f"上传文件过大，当前最大允许 {KNOWLEDGE_UPLOAD_MAX_MB}MB",
+                message=f"Upload file too large: max allowed size is {KNOWLEDGE_UPLOAD_MAX_MB}MB",
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                data={
+                    "request": _request_context(request, str(uuid4())),
+                    "content_length": content_length_value,
+                    "max_bytes": KNOWLEDGE_UPLOAD_MAX_BYTES,
+                    "hint": "Compress or split the file, or increase KNOWLEDGE_UPLOAD_MAX_MB",
+                },
             )
 
     try:
@@ -76,11 +173,13 @@ async def request_logging_middleware(request: Request, call_next):
     return response
 
 
+
 @app.exception_handler(AppException)
-async def app_exception_handler(request: Request, exc: AppException):
-    """统一业务异常处理器"""
+async def detailed_app_exception_handler(request: Request, exc: AppException):
+    request_id = str(uuid4())
     logger.warning(
-        "app exception | path=%s method=%s code=%s message=%s",
+        "app exception | request_id=%s path=%s method=%s code=%s message=%s",
+        request_id,
         request.url.path,
         request.method,
         exc.code,
@@ -90,72 +189,165 @@ async def app_exception_handler(request: Request, exc: AppException):
         code=exc.code,
         message=exc.message,
         status_code=exc.status_code,
-        data=exc.data,
+        data={
+            "request": _request_context(request, request_id),
+            "error": exc.data,
+            "hint": "Business error. Check code, message, error, and request context",
+        },
     )
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """请求参数校验异常处理器"""
+async def detailed_validation_exception_handler(request: Request, exc: RequestValidationError):
+    request_id = str(uuid4())
+    errors = _format_validation_errors(exc.errors())
+    logger.warning(
+        "validation exception | request_id=%s path=%s method=%s errors=%s",
+        request_id,
+        request.url.path,
+        request.method,
+        len(errors),
+    )
     return fail(
         code=ErrorCode.PARAM_ERROR,
-        message="参数错误",
+        message=f"Parameter error: {len(errors)} invalid field(s)",
         status_code=status.HTTP_400_BAD_REQUEST,
-        data=exc.errors(),
+        data={
+            "request": _request_context(request, request_id),
+            "errors": errors,
+            "hint": errors[0]["hint"] if errors else "Check whether request parameters match the API definition",
+        },
     )
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    """HTTP 异常处理器（将 FastAPI 原生异常转换为统一格式）"""
+@app.exception_handler(OperationalError)
+async def detailed_database_exception_handler(request: Request, exc: OperationalError):
+    request_id = str(uuid4())
+    logger.exception(
+        "database exception | request_id=%s path=%s method=%s error_type=%s",
+        request_id,
+        request.url.path,
+        request.method,
+        exc.__class__.__name__,
+    )
+    return fail(
+        code=ErrorCode.SERVER_ERROR,
+        message="Database unavailable: cannot connect to MySQL",
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        data={
+            "request": _request_context(request, request_id),
+            "error_type": exc.__class__.__name__,
+            "hint": "Check DB_HOST, DB_PORT, MySQL service status, firewall, VPN, and network access",
+        },
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def detailed_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    request_id = str(uuid4())
+    allowed_methods = []
+    if exc.status_code == status.HTTP_405_METHOD_NOT_ALLOWED:
+        allow_header = (exc.headers or {}).get("Allow")
+        if allow_header:
+            allowed_methods = [method.strip() for method in allow_header.split(",") if method.strip()]
+
     logger.warning(
-        "http exception | path=%s method=%s status=%s detail=%s",
+        "http exception | request_id=%s path=%s method=%s status=%s detail=%s allowed_methods=%s",
+        request_id,
         request.url.path,
         request.method,
         exc.status_code,
         exc.detail,
+        ",".join(allowed_methods) if allowed_methods else "-",
     )
     code_map = {
         status.HTTP_401_UNAUTHORIZED: ErrorCode.UNAUTHORIZED,
         status.HTTP_403_FORBIDDEN: ErrorCode.FORBIDDEN,
         status.HTTP_404_NOT_FOUND: ErrorCode.NOT_FOUND,
+        status.HTTP_405_METHOD_NOT_ALLOWED: ErrorCode.METHOD_NOT_ALLOWED,
         status.HTTP_409_CONFLICT: ErrorCode.CONFLICT,
+        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE: ErrorCode.PAYLOAD_TOO_LARGE,
+        status.HTTP_429_TOO_MANY_REQUESTS: ErrorCode.RATE_LIMITED,
     }
+    message, hint = _http_error_message_and_hint(request, exc, allowed_methods)
     return fail(
         code=code_map.get(exc.status_code, ErrorCode.PARAM_ERROR),
-        message=str(exc.detail),
+        message=message,
         status_code=exc.status_code,
+        data={
+            "request": _request_context(request, request_id),
+            "status_code": exc.status_code,
+            "detail": exc.detail,
+            "allowed_methods": allowed_methods or None,
+            "hint": hint,
+        },
+        headers=exc.headers,
     )
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception):
-    """未捕获异常兜底处理器"""
-    logger.exception("unhandled exception | path=%s", request.url.path)
+async def detailed_unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = str(uuid4())
+    logger.exception(
+        "unhandled exception | request_id=%s path=%s method=%s error_type=%s",
+        request_id,
+        request.url.path,
+        request.method,
+        exc.__class__.__name__,
+    )
+    data = {
+        "request": _request_context(request, request_id),
+        "error_type": exc.__class__.__name__,
+        "hint": "Unhandled server exception. Use request_id to find the full stack trace in server logs",
+    }
+    if app.debug:
+        data["detail"] = str(exc)
     return fail(
         code=ErrorCode.SERVER_ERROR,
-        message="服务异常",
+        message="Server error: unexpected exception while processing request",
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        data=data,
     )
 
 
 @app.get("/")
 def root():
-    """健康检查端点"""
+    """Health check endpoint."""
     return success({"message": "FastAPI backend is running"})
 
 
-# ─── 注册路由 ─────────────────────────────────────────
+@app.get("/api/health")
+def health_check():
+    """Public service health check."""
+    return success(
+        {
+            "status": "ok",
+            "service": "eduforge-ai-service",
+            "version": app.version,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+    )
+
+
+# Register routes
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(courses.router, prefix="/api")
 app.include_router(home.router)
 app.include_router(onboarding.router, prefix="/api")
 app.include_router(admin_onboarding.router, prefix="/api")
+app.include_router(admin_learning_style_characters.router, prefix="/api")
 app.include_router(admin_users.router, prefix="/api")
 
 app.include_router(profile.router, prefix="/api")
 app.include_router(learning_path.router, prefix="/api")
+app.include_router(exercise.router, prefix="/api")
+app.include_router(evaluation.router, prefix="/api")
 app.include_router(resources.router, prefix="/api")
-app.include_router(profile_dialogue.router,prefix="/api")
+app.include_router(agent_tasks.router, prefix="/api")
+app.include_router(dashboard.router, prefix="/api")
+app.include_router(students.router, prefix="/api")
+app.include_router(settings.router, prefix="/api")
+app.include_router(student_learning_style.router, prefix="/api")
+app.include_router(profile_dialogue.router, prefix="/api")
 app.include_router(knowledge.router, prefix="/api")

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+﻿from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.constants.role import Role
@@ -94,6 +94,7 @@ async def upload_course_file(
     file: UploadFile = File(...),
     chapter_id: str | None = Form(None),
     description: str | None = Form(None),
+    auto_generate_structure: bool = Form(True),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
 ):
@@ -110,6 +111,14 @@ async def upload_course_file(
         chapter_id=chapter_id,
         description=description,
     )
+    if auto_generate_structure:
+        draft = generate_course_structure_draft(
+            db=db,
+            course_id=course_id,
+            document_ids=[data["document_id"]],
+            created_by=str(current_user.id),
+        )
+        data["structure_draft"] = draft
     return success(data)
 
 
@@ -141,9 +150,9 @@ def get_course_documents(
 )
 def get_course_chunks(
     course_id: str,
-    document_id: str | None = Query(None, description="文件ID"),
+    document_id: str | None = Query(None, description="鏂囦欢ID"),
     keyword: str | None = Query(None, description="搜索关键词"),
-    chapter_id: str | None = Query(None, description="章节ID"),
+    chapter_id: str | None = Query(None, description="绔犺妭ID"),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -172,7 +181,7 @@ def get_course_chunks(
 def remove_course_document(
     course_id: str,
     document_id: str,
-    delete_vectors: bool = Query(True, description="是否同时删除向量库索引"),
+    delete_vectors: bool = Query(True, description="是否同时删除向量索引"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
 ):
@@ -253,7 +262,7 @@ def get_structure_draft(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
 ):
-    """获取课程结构草稿，供 Vue 管理端展示和编辑。"""
+    """获取课程结构草稿，供管理端展示和编辑。"""
     data = get_course_structure_draft(
         db=db,
         course_id=course_id,
@@ -273,7 +282,7 @@ def update_structure_draft(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
 ):
-    """保存教师在 Vue 管理端编辑后的课程结构草稿。"""
+    """保存管理端编辑后的课程结构草稿。"""
     data = update_course_structure_draft(
         db=db,
         course_id=course_id,
@@ -365,19 +374,11 @@ def create_chapter_knowledge_point(
 )
 def get_course_knowledge_points(
     course_id: str,
-    chapter_id: str | None = Query(None, description="章节ID，可选"),
+    chapter_id: str | None = Query(None, description="章节 ID，可选"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
 ):
-    """
-    获取课程知识点列表。
-
-    Vue 课程知识点管理页调用：
-    GET /api/courses/{course_id}/knowledge-points
-
-    可选：
-    GET /api/courses/{course_id}/knowledge-points?chapter_id=ch_xxx
-    """
+    """获取课程知识点列表，学生端生成资源和学习路径时也会使用。"""
     data = list_knowledge_points(
         db=db,
         course_id=course_id,
@@ -460,3 +461,4 @@ def reindex_document(
         created_by=str(current_user.id),
     )
     return success({"index_record": record})
+

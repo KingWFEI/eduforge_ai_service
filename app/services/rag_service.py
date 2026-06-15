@@ -14,7 +14,8 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.services.llm_service import LLMService
+from app.agents.chunk_classifier_agent import ChunkClassifierAgent
+from app.services.llm_service import DeepSeekService
 from app.utils.response import AppException, ErrorCode
 
 _MODEL = None
@@ -275,6 +276,121 @@ def _infer_chunk_structure(
     )
 
 
+def _infer_chunk_structures_with_llm(
+    chunks: list[str],
+    structure_items: list[dict[str, Any]],
+    batch_size: int = 12,
+) -> dict[int, tuple[str | None, str | None, list[str]]]:
+    if not chunks or not structure_items:
+        return {}
+
+    structure_payload = []
+    valid_chapter_ids = set()
+    valid_knowledge_point_ids = set()
+    for item in structure_items:
+        chapter_id = item.get("section_id") or item.get("chapter_id")
+        knowledge_point_id = item.get("knowledge_point_id")
+        if chapter_id:
+            valid_chapter_ids.add(chapter_id)
+        if knowledge_point_id:
+            valid_knowledge_point_ids.add(knowledge_point_id)
+        structure_payload.append(
+            {
+                "chapter_id": chapter_id,
+                "chapter_title": item.get("chapter_title"),
+                "section_title": item.get("section_title"),
+                "knowledge_point_id": knowledge_point_id,
+                "knowledge_point_name": item.get("knowledge_point_name"),
+                "knowledge_point_description": item.get("knowledge_point_description"),
+            }
+        )
+
+    assignments: dict[int, tuple[str | None, str | None, list[str]]] = {}
+    llm = DeepSeekService()
+
+    for start in range(0, len(chunks), batch_size):
+        batch = [
+            {
+                "chunk_index": index,
+                "content": chunks[index][:900],
+            }
+            for index in range(start, min(start + batch_size, len(chunks)))
+        ]
+        prompt = f"""
+你是 EduForge AI 的课程知识块归属识别智能体。
+
+请根据课程结构，为每个 chunk 选择最匹配的 chapter_id 和 knowledge_point_id。
+
+课程结构：
+{json.dumps(structure_payload, ensure_ascii=False, indent=2)}
+
+待识别 chunks：
+{json.dumps(batch, ensure_ascii=False, indent=2)}
+
+要求：
+1. chapter_id 必须来自课程结构中的 chapter_id。
+2. knowledge_point_id 必须来自课程结构中的 knowledge_point_id。
+3. 如果无法判断，chapter_id 和 knowledge_point_id 返回 null。
+4. confidence 为 0 到 1。
+5. keywords 返回用于解释匹配的短关键词。
+6. 严格输出 JSON 对象。
+
+JSON 格式：
+{{
+  "assignments": [
+    {{
+      "chunk_index": 0,
+      "chapter_id": null,
+      "knowledge_point_id": null,
+      "confidence": 0.0,
+      "keywords": []
+    }}
+  ]
+}}
+"""
+        try:
+            result = llm.generate_json_sync(
+                system_prompt="你是课程结构识别智能体，只输出合法 JSON。",
+                user_prompt=prompt,
+                max_tokens=3000,
+                temperature=0.1,
+            )
+        except Exception:
+            continue
+
+        rows = result.get("assignments", [])
+        if not isinstance(rows, list):
+            continue
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                chunk_index = int(row.get("chunk_index"))
+            except (TypeError, ValueError):
+                continue
+            if chunk_index < 0 or chunk_index >= len(chunks):
+                continue
+
+            chapter_id = row.get("chapter_id")
+            knowledge_point_id = row.get("knowledge_point_id")
+            if chapter_id not in valid_chapter_ids:
+                chapter_id = None
+            if knowledge_point_id not in valid_knowledge_point_ids:
+                knowledge_point_id = None
+
+            keywords = row.get("keywords") or []
+            if not isinstance(keywords, list):
+                keywords = []
+            assignments[chunk_index] = (
+                chapter_id,
+                knowledge_point_id,
+                [str(keyword)[:50] for keyword in keywords[:8]],
+            )
+
+    return assignments
+
+
 def rebuild_course_document_index_with_structure(
     db: Session,
     course_id: str,
@@ -356,10 +472,26 @@ def rebuild_course_document_index_with_structure(
     embeddings = []
     metadatas = []
     first_chapter_id = None
+    try:
+        classifier_result = ChunkClassifierAgent().run_sync(
+            {
+                "chunks": chunks,
+                "structure_items": structure_items,
+                "batch_size": 12,
+            }
+        )
+        llm_assignments = classifier_result.get("assignments", {})
+        if not isinstance(llm_assignments, dict):
+            llm_assignments = {}
+    except Exception:
+        llm_assignments = {}
 
     for index, chunk in enumerate(chunks):
         chunk_id = "chunk_" + uuid.uuid4().hex[:12]
-        chapter_id, knowledge_point_id, keywords = _infer_chunk_structure(chunk, structure_items)
+        chapter_id, knowledge_point_id, keywords = llm_assignments.get(
+            index,
+            _infer_chunk_structure(chunk, structure_items),
+        )
         if first_chapter_id is None and chapter_id:
             first_chapter_id = chapter_id
         section = document["filename"] + f" - 片段 {index + 1}"
@@ -1346,7 +1478,7 @@ def ask_knowledge_base(
 
     # 4. 调用 llm
     try:
-        llm = LLMService()
+        llm = DeepSeekService()
 
         # 这里我们需要一个普通文本生成方法
         answer = llm.rag_generate_text_sync(

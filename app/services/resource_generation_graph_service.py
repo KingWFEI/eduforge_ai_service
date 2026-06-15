@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
@@ -24,6 +25,10 @@ from app.models.resource_agent import (
     LearningResource,
     ResourceGenerationTask,
 )
+from app.services.llm_service import DeepSeekService
+
+
+logger = logging.getLogger("app.services.resource_generation_graph")
 
 
 class ResourceGraphState(TypedDict, total=False):
@@ -59,16 +64,17 @@ class ResourceGenerationGraphService:
 
     def __init__(self, db: Session):
         self.db = db
+        self.llm_service = DeepSeekService()
 
-        self.profile_agent = ProfileAgent()
-        self.knowledge_agent = KnowledgeAgent()
-        self.designer_agent = ResourceDesignerAgent()
-        self.doc_agent = DocAgent()
-        self.mindmap_agent = MindMapAgent()
-        self.exercise_agent = ExerciseAgent()
-        self.code_agent = CodeAgent()
-        self.video_agent = VideoAgent()
-        self.safety_agent = SafetyAgent()
+        self.profile_agent = ProfileAgent(self.llm_service)
+        self.knowledge_agent = KnowledgeAgent(self.llm_service)
+        self.designer_agent = ResourceDesignerAgent(self.llm_service)
+        self.doc_agent = DocAgent(self.llm_service)
+        self.mindmap_agent = MindMapAgent(self.llm_service)
+        self.exercise_agent = ExerciseAgent(self.llm_service)
+        self.code_agent = CodeAgent(self.llm_service)
+        self.video_agent = VideoAgent(self.llm_service)
+        self.safety_agent = SafetyAgent(self.llm_service)
 
         self.graph = self._build_graph()
 
@@ -402,5 +408,7 @@ def run_resource_generation_graph(resource_task_id: str) -> None:
     try:
         service = ResourceGenerationGraphService(db)
         service.run(resource_task_id)
+    except Exception:
+        logger.exception("resource generation background task failed | task_id=%s", resource_task_id)
     finally:
         db.close()

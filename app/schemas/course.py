@@ -47,6 +47,7 @@ class CourseUploadResponse(BaseModel):
     chunk_count: int = Field(..., description="知识块数量")
     parse_status: str = Field(..., description="解析状态")
     index_status: str = Field(..., description="索引状态")
+    structure_draft: Optional[dict[str, Any]] = Field(None, description="课程结构草稿")
 
 
 class CourseDocumentItem(BaseModel):
@@ -88,6 +89,8 @@ class CourseKnowledgeChunkItem(BaseModel):
     course_id: str = Field(..., description="课程ID")
     chapter_id: Optional[str] = Field(None, description="章节ID")
     chapter: Optional[str] = Field(None, description="章节名称")
+    knowledge_point_id: Optional[str] = Field(None, description="知识点ID")
+    knowledge_point: Optional[str] = Field(None, description="知识点名称")
     section: Optional[str] = Field(None, description="片段标题")
     content: str = Field(..., description="知识块内容")
     keywords: List[str] = Field(default_factory=list, description="关键词")
@@ -108,6 +111,8 @@ class CourseChapterCreate(BaseModel):
     title: str = Field(..., description="章节标题")
     sort_order: int = Field(0, description="章节排序")
     description: Optional[str] = Field(None, description="章节说明")
+    parent_id: Optional[str] = Field(None, description="父章节ID；为空表示一级章")
+    level: int = Field(1, description="层级：1=章，2=小节")
 
 
 class CourseChapterCreateResponse(BaseModel):

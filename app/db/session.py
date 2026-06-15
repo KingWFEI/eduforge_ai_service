@@ -22,7 +22,14 @@ DATABASE_URL = (
 # 创建数据库引擎
 engine = create_engine(
     DATABASE_URL,
-    echo=os.getenv("DB_ECHO", "false").lower() == "true"
+    echo=os.getenv("DB_ECHO", "false").lower() == "true",
+    pool_pre_ping=True,
+    pool_recycle=int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800")),
+    connect_args={
+        "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "5")),
+        "read_timeout": int(os.getenv("DB_READ_TIMEOUT_SECONDS", "10")),
+        "write_timeout": int(os.getenv("DB_WRITE_TIMEOUT_SECONDS", "10")),
+    },
 )
 
 # 创建会话工厂

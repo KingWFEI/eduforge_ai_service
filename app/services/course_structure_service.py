@@ -6,7 +6,7 @@ from fastapi import status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.services.llm_service import LLMService
+from app.agents.course_structure_agent import CourseStructureAgent
 from app.services.rag_service import (
     extract_text_from_file,
     rebuild_course_document_index_with_structure,
@@ -187,16 +187,7 @@ def generate_course_structure_draft(
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
-    prompt = (
-        "请根据以下课程资料生成课程结构草稿。\n\n"
-        + "\n\n---\n\n".join(text_parts)[:50000]
-    )
-    draft = LLMService().generate_json_sync(
-        system_prompt=STRUCTURE_SYSTEM_PROMPT,
-        user_prompt=prompt,
-        max_tokens=5000,
-        temperature=0.1,
-    )
+    draft = CourseStructureAgent().run_sync({"text_parts": text_parts})
     normalized_draft = _normalize_draft(draft)
     draft_id = "csd_" + uuid.uuid4().hex[:12]
     source_document_ids = [document["id"] for document in documents]

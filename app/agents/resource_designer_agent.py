@@ -1,70 +1,82 @@
+import json
 from typing import Any, Dict
 
 from app.agents.base import BaseAgent
 
 
 class ResourceDesignerAgent(BaseAgent):
-    """
-    资源设计智能体。
-
-    作用：
-    根据画像、知识点、目标和资源类型，设计每类资源的生成重点与推荐理由。
-    """
+    """Design the generation plan for requested learning resources."""
 
     name = "Resource Designer Agent"
 
     async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        profile = input_data.get("profile", {})
-        resource_types = input_data.get("resource_types", [])
-        knowledge_point = input_data.get("knowledge_point", "")
-        difficulty = input_data.get("difficulty", "基础")
-        goal = input_data.get("goal", "")
+        prompt = self._build_prompt(input_data)
+        result = await self.llm_service.generate_json(
+            prompt=prompt,
+            max_tokens=1800,
+            temperature=0.2,
+        )
 
-        preferences = profile.get("learning_preferences", []) or []
-        weaknesses = profile.get("weaknesses", []) or []
+        resource_plan = result.get("resource_plan", [])
+        if not isinstance(resource_plan, list):
+            raise RuntimeError("DeepSeek returned invalid resource_plan")
 
-        plan = []
-        for resource_type in resource_types:
-            plan.append({
+        requested_types = input_data.get("resource_types", [])
+        normalized_plan = []
+        for resource_type in requested_types:
+            plan_item = self._find_plan(resource_plan, resource_type)
+            normalized_plan.append({
                 "resource_type": resource_type,
-                "knowledge_point": knowledge_point,
-                "difficulty": difficulty,
-                "focus": self._focus_for(resource_type),
-                "reason": self._reason_for(
-                    resource_type=resource_type,
-                    preferences=preferences,
-                    weaknesses=weaknesses,
-                    goal=goal,
-                ),
+                "knowledge_point": input_data.get("knowledge_point", ""),
+                "difficulty": input_data.get("difficulty", "基础"),
+                "focus": plan_item.get("focus") or "",
+                "reason": plan_item.get("reason") or "",
+                "requirements": plan_item.get("requirements") or [],
             })
 
         return {
-            "resource_plan": plan,
-            "summary": f"已完成 {len(plan)} 类资源的生成规划"
+            "resource_plan": normalized_plan,
+            "summary": f"DeepSeek 已完成 {len(normalized_plan)} 类资源的生成规划",
         }
 
-    def _focus_for(self, resource_type: str) -> str:
-        mapping = {
-            "document": "用图解、案例和分步骤说明帮助学生理解概念",
-            "mind_map": "用结构化导图梳理知识点层次关系",
-            "exercise": "围绕薄弱点生成基础练习题和解析",
-            "code_case": "用可运行代码把概念落到实践",
-            "video_script": "生成适合短视频讲解的分镜脚本",
+    def _build_prompt(self, input_data: Dict[str, Any]) -> str:
+        payload = {
+            "profile": input_data.get("profile", {}),
+            "resource_types": input_data.get("resource_types", []),
+            "knowledge_point": input_data.get("knowledge_point", ""),
+            "difficulty": input_data.get("difficulty", "基础"),
+            "goal": input_data.get("goal", ""),
+            "knowledge_chunks": input_data.get("knowledge_chunks", []),
         }
-        return mapping.get(resource_type, "生成个性化学习资源")
+        return f"""
+你是 EduForge AI 的学习资源设计智能体。
 
-    def _reason_for(self, resource_type: str, preferences, weaknesses, goal: str) -> str:
-        pref_text = "、".join(preferences) if preferences else "循序渐进学习"
-        weak_text = "、".join(weaknesses) if weaknesses else "当前知识点"
+请根据学生画像、知识点、学习目标和知识库片段，为每一种 requested resource type 设计生成重点。
 
-        if resource_type == "document":
-            return f"你偏好{pref_text}，适合先通过讲解文档建立直观理解。"
-        if resource_type == "mind_map":
-            return f"你需要梳理知识结构，导图可以帮助你把{weak_text}相关概念串起来。"
-        if resource_type == "exercise":
-            return f"你的薄弱点包含{weak_text}，需要通过练习题巩固。"
-        if resource_type == "code_case":
-            return f"你的学习目标是{goal or '提升实践能力'}，代码案例可以帮助你动手验证知识。"
-        if resource_type == "video_script":
-            return "视频脚本适合把抽象知识转化为更直观的讲解内容。"
-        return "根据你的画像和学习目标进行个性化推荐。"
+输入：
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+
+要求：
+1. 只为输入中的 resource_types 生成规划。
+2. reason 要解释为什么这种资源适合当前学生和目标。
+3. requirements 写清楚后续资源生成必须覆盖的内容。
+4. 严格输出 JSON 对象，不要输出 Markdown。
+
+JSON 格式：
+{{
+  "resource_plan": [
+    {{
+      "resource_type": "document",
+      "focus": "",
+      "reason": "",
+      "requirements": []
+    }}
+  ]
+}}
+"""
+
+    def _find_plan(self, resource_plan: list[dict], resource_type: str) -> dict:
+        for item in resource_plan:
+            if item.get("resource_type") == resource_type:
+                return item
+        return {}

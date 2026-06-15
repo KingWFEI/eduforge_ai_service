@@ -19,7 +19,7 @@ from app.schemas.profile_dialogue import (
 )
 from app.constants.profile_dialogue import PROFILE_DIALOGUE_SLOT_ORDER
 
-from app.services.llm_service import LLMService
+from app.services.llm_service import DeepSeekService
 from app.services.profile_dialogue_orchestrator import ProfileDialogueOrchestrator
 
 from fastapi import Request
@@ -83,7 +83,7 @@ async def send_profile_dialogue_message(
     """
     发送消息接口
     """
-    llm_service = LLMService()
+    llm_service = DeepSeekService()
 
     orchestrator = ProfileDialogueOrchestrator(
         db=db,
@@ -157,7 +157,7 @@ async def stream_profile_dialogue_message(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(Role.STUDENT)),
 ):
-    llm_service = LLMService()
+    llm_service = DeepSeekService()
 
     orchestrator = ProfileDialogueOrchestrator(
         db=db,

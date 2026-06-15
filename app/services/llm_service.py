@@ -16,7 +16,7 @@ load_dotenv()
 logger = logging.getLogger("app.services.llm_service")
 
 
-class LLMService:
+class DeepSeekService:
     """
     统一大模型调用服务。
 
@@ -267,3 +267,7 @@ class LLMService:
                 f"{parse_error.msg}（第 {parse_error.lineno} 行，第 {parse_error.colno} 列）"
             )
         raise RuntimeError("LLM 返回内容不是合法 JSON")
+
+
+# Backward-compatible alias for older imports.
+LLMService = DeepSeekService

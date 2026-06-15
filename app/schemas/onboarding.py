@@ -269,8 +269,8 @@ class ErrorInfo(BaseModel):
 
 class ProfileQueryData(BaseModel):
     """画像查询响应数据"""
-    submission_id: str
-    analysis_id: str
+    submission_id: Optional[str] = None
+    analysis_id: Optional[str] = None
     status: str
     progress: int
     current_step: Optional[str] = None

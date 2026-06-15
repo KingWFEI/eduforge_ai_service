@@ -15,6 +15,7 @@ class ErrorCode(IntEnum):
     UNAUTHORIZED = 40100
     FORBIDDEN = 40300
     NOT_FOUND = 40400
+    METHOD_NOT_ALLOWED = 40500
     CONFLICT = 40900
     PAYLOAD_TOO_LARGE = 41300
     RATE_LIMITED = 42900
@@ -64,6 +65,7 @@ def fail(
     message: str,
     status_code: int = status.HTTP_400_BAD_REQUEST,
     data: Any = None,
+    headers: Optional[dict[str, str]] = None,
 ) -> JSONResponse:
     """返回失败响应的统一格式（JSONResponse，携带 HTTP 状态码）"""
     return JSONResponse(
@@ -73,4 +75,5 @@ def fail(
             "message": message,
             "data": jsonable_encoder(data),
         },
+        headers=headers,
     )

@@ -1,10 +1,325 @@
+import json
 import uuid
+from typing import Any
 from fastapi import status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.utils.response import AppException, ErrorCode
+
+
+def generate_learning_path(db: Session, current_user: User, payload: Any) -> dict:
+    student_id = str(current_user.id)
+
+    course = db.execute(
+        text(
+            """
+            SELECT course_id, name
+            FROM courses
+            WHERE course_id = :course_id
+            LIMIT 1
+            """
+        ),
+        {"course_id": payload.course_id},
+    ).mappings().first()
+    if course is None:
+        raise AppException(
+            code=ErrorCode.NOT_FOUND,
+            message="课程不存在",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    knowledge_points = _select_path_knowledge_points(
+        db=db,
+        student_id=student_id,
+        course_id=payload.course_id,
+        requested_points=payload.knowledge_points,
+        limit=payload.duration_days,
+    )
+    if not knowledge_points:
+        knowledge_points = [{"name": course["name"], "score": None}]
+
+    task_items = []
+    for index in range(payload.duration_days):
+        point = knowledge_points[index % len(knowledge_points)]
+        name = point["name"]
+        score = point.get("score")
+        focus = "薄弱巩固" if score is not None and score < 60 else "知识学习"
+        task_items.append(
+            {
+                "day_no": index + 1,
+                "topic": name,
+                "description": f"{focus}: 学习{name}，完成配套资源阅读与练习。",
+                "estimated_minutes": payload.daily_minutes,
+                "resource_ids": _match_resource_ids(db, student_id, payload.course_id, name),
+                "status": "not_started",
+            }
+        )
+
+    path_id = "path_" + uuid.uuid4().hex[:12]
+    plan = {
+        "agent": "Planner Agent",
+        "strategy": "优先安排薄弱知识点，并结合课程结构顺序生成每日任务",
+        "knowledge_points": knowledge_points,
+        "tasks": task_items,
+    }
+
+    db.execute(
+        text(
+            """
+            UPDATE learning_paths
+            SET status = 'archived'
+            WHERE student_id = :student_id
+              AND course_id = :course_id
+              AND status = 'active'
+            """
+        ),
+        {"student_id": student_id, "course_id": payload.course_id},
+    )
+    db.execute(
+        text(
+            """
+            INSERT INTO learning_paths (
+                id, student_id, course_id, title, goal, duration_days,
+                daily_minutes, progress, status, plan_json, created_at, updated_at
+            )
+            VALUES (
+                :id, :student_id, :course_id, :title, :goal, :duration_days,
+                :daily_minutes, 0, 'active', :plan_json, NOW(), NOW()
+            )
+            """
+        ),
+        {
+            "id": path_id,
+            "student_id": student_id,
+            "course_id": payload.course_id,
+            "title": f"{course['name']} 个性化学习路径",
+            "goal": payload.goal,
+            "duration_days": payload.duration_days,
+            "daily_minutes": payload.daily_minutes,
+            "plan_json": json.dumps(plan, ensure_ascii=False),
+        },
+    )
+
+    for item in task_items:
+        db.execute(
+            text(
+                """
+                INSERT INTO learning_path_tasks (
+                    id, path_id, day_no, topic, description, estimated_minutes,
+                    resource_ids_json, status, created_at
+                )
+                VALUES (
+                    :id, :path_id, :day_no, :topic, :description, :estimated_minutes,
+                    :resource_ids_json, 'not_started', NOW()
+                )
+                """
+            ),
+            {
+                "id": "path_task_" + uuid.uuid4().hex[:12],
+                "path_id": path_id,
+                "day_no": item["day_no"],
+                "topic": item["topic"],
+                "description": item["description"],
+                "estimated_minutes": item["estimated_minutes"],
+                "resource_ids_json": json.dumps(item["resource_ids"], ensure_ascii=False),
+            },
+        )
+
+    db.commit()
+    return get_learning_path_by_id(db=db, current_user=current_user, path_id=path_id) | {"agent": "Planner Agent"}
+
+
+def get_my_learning_path(db: Session, current_user: User) -> dict | None:
+    student_id = str(current_user.id)
+    row = db.execute(
+        text(
+            """
+            SELECT id
+            FROM learning_paths
+            WHERE student_id = :student_id
+              AND status = 'active'
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            """
+        ),
+        {"student_id": student_id},
+    ).mappings().first()
+    if row is None:
+        return None
+    return get_learning_path_by_id(db=db, current_user=current_user, path_id=row["id"])
+
+
+def get_learning_path_by_id(db: Session, current_user: User, path_id: str) -> dict:
+    student_id = str(current_user.id)
+    path = db.execute(
+        text(
+            """
+            SELECT
+                p.id, p.course_id, c.name AS course_name, p.title, p.goal,
+                p.duration_days, p.daily_minutes, p.progress, p.status,
+                p.plan_json, p.created_at, p.updated_at
+            FROM learning_paths p
+            LEFT JOIN courses c ON c.course_id = p.course_id
+            WHERE p.id = :path_id
+              AND p.student_id = :student_id
+            LIMIT 1
+            """
+        ),
+        {"path_id": path_id, "student_id": student_id},
+    ).mappings().first()
+    if path is None:
+        raise AppException(
+            code=ErrorCode.NOT_FOUND,
+            message="学习路径不存在",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return _serialize_learning_path(db=db, path=path)
+
+
+def _select_path_knowledge_points(
+    db: Session,
+    student_id: str,
+    course_id: str,
+    requested_points: list[str],
+    limit: int,
+) -> list[dict]:
+    if requested_points:
+        return [{"name": item, "score": None} for item in requested_points[:limit]]
+
+    weak_rows = db.execute(
+        text(
+            """
+            SELECT knowledge_point, mastery_score AS score
+            FROM weak_point_records
+            WHERE student_id = :student_id
+              AND (course_id = :course_id OR course_id IS NULL)
+            ORDER BY COALESCE(mastery_score, 0) ASC, wrong_count DESC, updated_at DESC
+            LIMIT :limit
+            """
+        ),
+        {"student_id": student_id, "course_id": course_id, "limit": limit},
+    ).mappings().all()
+    if weak_rows:
+        return [{"name": row["knowledge_point"], "score": row["score"]} for row in weak_rows]
+
+    mastery_rows = db.execute(
+        text(
+            """
+            SELECT knowledge_point, score
+            FROM mastery_records
+            WHERE student_id = :student_id
+              AND course_id = :course_id
+            ORDER BY score ASC, updated_at DESC
+            LIMIT :limit
+            """
+        ),
+        {"student_id": student_id, "course_id": course_id, "limit": limit},
+    ).mappings().all()
+    if mastery_rows:
+        return [{"name": row["knowledge_point"], "score": row["score"]} for row in mastery_rows]
+
+    kp_rows = db.execute(
+        text(
+            """
+            SELECT name, NULL AS score
+            FROM knowledge_points
+            WHERE course_id = :course_id
+            ORDER BY sort_order ASC, created_at ASC
+            LIMIT :limit
+            """
+        ),
+        {"course_id": course_id, "limit": limit},
+    ).mappings().all()
+    return [{"name": row["name"], "score": row["score"]} for row in kp_rows]
+
+
+def _match_resource_ids(db: Session, student_id: str, course_id: str, knowledge_point: str) -> list[str]:
+    rows = db.execute(
+        text(
+            """
+            SELECT id
+            FROM learning_resources
+            WHERE student_id = :student_id
+              AND course_id = :course_id
+              AND review_status IN ('approved', 'auto_passed')
+              AND (
+                    title LIKE :keyword
+                 OR description LIKE :keyword
+                 OR reason LIKE :keyword
+              )
+            ORDER BY created_at DESC
+            LIMIT 3
+            """
+        ),
+        {"student_id": student_id, "course_id": course_id, "keyword": f"%{knowledge_point}%"},
+    ).mappings().all()
+    return [row["id"] for row in rows]
+
+
+def _json_value(value: Any, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return value
+
+
+def _serialize_learning_path(db: Session, path: Any) -> dict:
+    task_rows = db.execute(
+        text(
+            """
+            SELECT id, day_no, topic, description, estimated_minutes,
+                   resource_ids_json, status, completed_at
+            FROM learning_path_tasks
+            WHERE path_id = :path_id
+            ORDER BY day_no ASC
+            """
+        ),
+        {"path_id": path["id"]},
+    ).mappings().all()
+
+    tasks = []
+    completed_tasks = 0
+    for row in task_rows:
+        if row["status"] == "completed":
+            completed_tasks += 1
+        tasks.append(
+            {
+                "task_id": row["id"],
+                "day_no": row["day_no"],
+                "topic": row["topic"],
+                "description": row["description"],
+                "estimated_minutes": row["estimated_minutes"],
+                "resource_ids": _json_value(row["resource_ids_json"], []),
+                "status": row["status"],
+                "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,
+            }
+        )
+
+    total_tasks = len(tasks)
+    progress = round(completed_tasks / total_tasks, 2) if total_tasks else float(path["progress"] or 0)
+    return {
+        "path_id": path["id"],
+        "title": path["title"],
+        "course_id": path["course_id"],
+        "course_name": path["course_name"],
+        "goal": path["goal"],
+        "duration_days": path["duration_days"],
+        "daily_minutes": path["daily_minutes"],
+        "progress": progress,
+        "status": path["status"],
+        "plan": _json_value(path["plan_json"], {}),
+        "tasks": tasks,
+        "total_tasks": total_tasks,
+        "completed_tasks": completed_tasks,
+        "created_at": path["created_at"].isoformat() if path["created_at"] else None,
+        "updated_at": path["updated_at"].isoformat() if path["updated_at"] else None,
+    }
 
 
 def get_today_learning_path(db: Session, current_user: User) -> dict:

@@ -1,13 +1,13 @@
 import json
 from typing import Any, Dict
 
-from app.services.llm_service import LLMService
+from app.services.llm_service import DeepSeekService
 
 
 class ProfileGenerationSkill:
     """Generate and validate a cross-course student learning profile."""
 
-    def __init__(self, llm_service: LLMService) -> None:
+    def __init__(self, llm_service: DeepSeekService) -> None:
         self.llm_service = llm_service
 
     def generate_profile(self, student_id: str, answers: Dict[str, Any]) -> Dict[str, Any]:
