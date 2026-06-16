@@ -5,15 +5,37 @@ from app.constants.role import Role
 from app.core.dependencies import get_current_user, require_role
 from app.db.session import get_db
 from app.models.course import Course
+from app.models.course_structure import CourseChapter, KnowledgePoint
 from app.models.user import User
-from app.schemas.course import CourseCreate, CourseResponse, CourseUploadResponse, CourseDocumentListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse
+from app.schemas.course import CourseCreate, CourseResponse, CourseDetailResponse, CourseSyllabusResponse, CourseUploadResponse, CourseDocumentListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse
 from app.services.course_service import list_course_documents, list_course_knowledge_chunks, delete_course_document, create_course_chapter, list_course_chapters, create_knowledge_point, list_knowledge_points, list_vector_index_records, link_course_document_to_chapter_and_knowledge_point, reindex_course_document
+from app.services.course_syllabus_service import get_course_syllabus
 from app.services.course_structure_service import generate_course_structure_draft, get_course_structure_draft, update_course_structure_draft, confirm_course_structure_draft
 from app.services.rag_service import upload_and_index_course_document
 from app.schemas.common import PageResponse
 from app.utils.response import ApiResponse, AppException, ErrorCode, success
 
 router = APIRouter(prefix="/courses", tags=["课程"])
+v1_router = APIRouter(prefix="/v1/courses", tags=["课程"])
+
+
+@v1_router.get(
+    "/{course_id}/syllabus",
+    response_model=ApiResponse[CourseSyllabusResponse],
+)
+def get_syllabus(
+    course_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """获取课程完整章节树和当前用户的小节学习进度。"""
+    return success(
+        get_course_syllabus(
+            db=db,
+            course_id=course_id,
+            student_id=str(current_user.id),
+        )
+    )
 
 
 @router.post("/", response_model=ApiResponse[CourseResponse], include_in_schema=False)
@@ -65,9 +87,7 @@ def get_courses(
             page_size=page_size,
         )
     )
-
-
-@router.get("/{course_id}", response_model=ApiResponse[CourseResponse])
+@router.get("/{course_id}", response_model=ApiResponse[CourseDetailResponse])
 def get_course(
     course_id: str,
     db: Session = Depends(get_db),
@@ -85,7 +105,82 @@ def get_course(
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
-    return success(course)
+    chapter_rows = (
+        db.query(CourseChapter)
+        .filter(CourseChapter.course_id == course.course_id)
+        .order_by(CourseChapter.sort_order.asc(), CourseChapter.created_at.asc())
+        .all()
+    )
+    knowledge_point_rows = (
+        db.query(KnowledgePoint)
+        .filter(KnowledgePoint.course_id == course.course_id)
+        .order_by(KnowledgePoint.sort_order.asc(), KnowledgePoint.created_at.asc())
+        .all()
+    )
+
+    chapter_by_id = {chapter.id: chapter for chapter in chapter_rows}
+    root_chapters = [
+        chapter
+        for chapter in chapter_rows
+        if chapter.parent_id is None or chapter.parent_id not in chapter_by_id
+    ]
+    chapter_items = {
+        chapter.id: {
+            "chapter_id": chapter.id,
+            "chapter_name": chapter.title,
+            "knowledge_points": [],
+        }
+        for chapter in root_chapters
+    }
+
+    for point in knowledge_point_rows:
+        chapter = chapter_by_id.get(point.chapter_id)
+        root_id = chapter.parent_id if chapter and chapter.parent_id else point.chapter_id
+        if root_id not in chapter_items and chapter is not None:
+            chapter_items[root_id] = {
+                "chapter_id": root_id,
+                "chapter_name": chapter.title,
+                "knowledge_points": [],
+            }
+        if root_id in chapter_items:
+            chapter_items[root_id]["knowledge_points"].append(
+                {
+                    "knowledge_point_id": point.id,
+                    "name": point.name,
+                }
+            )
+
+    creator = None
+    if course.created_by is not None:
+        creator_row = db.query(User).filter(User.id == course.created_by).first()
+        if creator_row is not None:
+            creator = {
+                "user_id": creator_row.id,
+                "name": creator_row.name or creator_row.username,
+                "avatar_url": creator_row.avatar_url or None,
+            }
+
+    return success(
+        {
+            "id": course.id,
+            "course_id": course.course_id,
+            "course_name": course.name,
+            "name": course.name,
+            "description": course.description,
+            "cover_url": course.cover_url,
+            "cover_color": None,
+            "semester": course.semester,
+            "status": course.status,
+            "created_by": course.created_by,
+            "creator": creator,
+            "chapter_count": len(root_chapters),
+            "section_count": sum(1 for chapter in chapter_rows if chapter.parent_id is not None),
+            "knowledge_point_count": len(knowledge_point_rows),
+            "chapters": list(chapter_items.values()),
+            "created_at": course.created_at,
+            "updated_at": course.updated_at,
+        }
+    )
 
 
 @router.post("/{course_id}/upload", response_model=ApiResponse[CourseUploadResponse])

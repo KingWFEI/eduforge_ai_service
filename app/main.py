@@ -333,6 +333,7 @@ def health_check():
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(courses.router, prefix="/api")
+app.include_router(courses.v1_router, prefix="/api")
 app.include_router(home.router)
 app.include_router(onboarding.router, prefix="/api")
 app.include_router(admin_onboarding.router, prefix="/api")

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -42,6 +42,59 @@ class KnowledgePoint(Base):
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class StudentSectionProgress(Base):
+    """学生课程小节学习进度。"""
+
+    __tablename__ = "student_section_progress"
+    __table_args__ = (
+        UniqueConstraint(
+            "student_id",
+            "section_id",
+            name="uq_student_section_progress_student_section",
+        ),
+        Index(
+            "idx_student_section_progress_student_course",
+            "student_id",
+            "course_id",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True, comment="主键ID")
+    student_id = Column(String(64), nullable=False, index=True, comment="学生ID，对应用户主键的字符串形式")
+    course_id = Column(
+        String(64),
+        ForeignKey("courses.course_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="课程业务ID",
+    )
+    section_id = Column(
+        String(64),
+        ForeignKey("course_chapters.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="课程小节ID，对应二级课程章节",
+    )
+    progress = Column(Float, nullable=False, default=0.0, server_default=text("0"), comment="学习进度，范围0.0到1.0")
+    status = Column(
+        String(30),
+        nullable=False,
+        default="unlearned",
+        server_default=text("'unlearned'"),
+        index=True,
+        comment="学习状态：completed、learning、unlearned、locked",
+    )
+    last_study_at = Column(DateTime(timezone=True), nullable=True, index=True, comment="最后学习时间")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), comment="创建时间")
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+        comment="更新时间",
+    )
 
 
 class CourseDocument(Base):

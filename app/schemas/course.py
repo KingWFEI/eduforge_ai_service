@@ -26,6 +26,80 @@ class CourseResponse(BaseModel):
         from_attributes = True
 
 
+class CourseDetailCreator(BaseModel):
+    user_id: int
+    name: str
+    avatar_url: Optional[str] = None
+
+
+class CourseDetailKnowledgePoint(BaseModel):
+    knowledge_point_id: str
+    name: str
+
+
+class CourseDetailChapter(BaseModel):
+    chapter_id: str
+    chapter_name: str
+    knowledge_points: List[CourseDetailKnowledgePoint] = Field(default_factory=list)
+
+
+class CourseDetailResponse(BaseModel):
+    """移动端课程详情页所需的课程基础信息。"""
+
+    id: int
+    course_id: str
+    course_name: str
+    name: str
+    description: Optional[str] = None
+    cover_url: Optional[str] = None
+    cover_color: Optional[str] = None
+    semester: Optional[str] = None
+    status: Optional[str] = None
+    created_by: Optional[int] = None
+    creator: Optional[CourseDetailCreator] = None
+    chapter_count: int = 0
+    section_count: int = 0
+    knowledge_point_count: int = 0
+    chapters: List[CourseDetailChapter] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class CourseSyllabusSectionItem(BaseModel):
+    section_id: str
+    section_name: str
+    description: Optional[str] = None
+    sort_order: int = 0
+    status: str
+    progress: float = Field(ge=0.0, le=1.0)
+    estimated_time_minutes: int = Field(ge=0)
+    has_exercise: bool
+    has_resource: bool
+    last_study_time: Optional[datetime] = None
+
+
+class CourseSyllabusChapterItem(BaseModel):
+    chapter_id: str
+    chapter_name: str
+    description: Optional[str] = None
+    sort_order: int = 0
+    status: str
+    progress: float = Field(ge=0.0, le=1.0)
+    is_current_chapter: bool
+    current_section_id: Optional[str] = None
+    sections: List[CourseSyllabusSectionItem] = Field(default_factory=list)
+
+
+class CourseSyllabusResponse(BaseModel):
+    course_id: str
+    total_chapters: int
+    total_sections: int
+    completed_sections: int
+    current_chapter_id: Optional[str] = None
+    current_section_id: Optional[str] = None
+    chapters: List[CourseSyllabusChapterItem] = Field(default_factory=list)
+
+
 class CourseFileResponse(BaseModel):
     """课程文件响应"""
     id: str
