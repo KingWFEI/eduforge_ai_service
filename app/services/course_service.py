@@ -79,6 +79,63 @@ def list_course_documents(
     }
 
 
+def archive_course(
+    db: Session,
+    course_id: str,
+    current_user_id: int,
+    current_user_role: str,
+) -> bool:
+    """
+    逻辑归档课程，保留学习记录、资源和知识库历史数据。
+    """
+
+    course = db.execute(
+        text(
+            """
+            SELECT id, course_id, created_by, status
+            FROM courses
+            WHERE course_id = :course_id
+               OR (:course_pk IS NOT NULL AND id = :course_pk)
+            LIMIT 1
+            """
+        ),
+        {
+            "course_id": course_id,
+            "course_pk": int(course_id) if course_id.isdigit() else None,
+        },
+    ).mappings().first()
+
+    if course is None:
+        raise AppException(
+            code=ErrorCode.NOT_FOUND,
+            message="课程不存在",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    if current_user_role != "admin" and course["created_by"] != current_user_id:
+        raise AppException(
+            code=ErrorCode.FORBIDDEN,
+            message="无权限删除或归档该课程",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    if course["status"] != "archived":
+        db.execute(
+            text(
+                """
+                UPDATE courses
+                SET status = 'archived',
+                    updated_at = NOW()
+                WHERE id = :id
+                """
+            ),
+            {"id": course["id"]},
+        )
+        db.commit()
+
+    return True
+
+
 def list_course_knowledge_chunks(
     db: Session,
     course_id: str,
@@ -525,6 +582,126 @@ def list_course_chapters(
         "course_id": course_id,
         "total": len(items),
         "items": items,
+    }
+
+
+def get_course_chapter_content(
+    db: Session,
+    course_id: str,
+    chapter_id: str,
+) -> dict:
+    """Return readable chapter content assembled from parsed knowledge chunks."""
+
+    chapter = db.execute(
+        text(
+            """
+            SELECT id, course_id, parent_id, level, title, description, sort_order
+            FROM course_chapters
+            WHERE id = :chapter_id
+              AND course_id = :course_id
+            LIMIT 1
+            """
+        ),
+        {"course_id": course_id, "chapter_id": chapter_id},
+    ).mappings().first()
+
+    if chapter is None:
+        raise AppException(
+            code=ErrorCode.NOT_FOUND,
+            message="章节不存在或不属于该课程",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    chapter_ids = [chapter_id]
+    child_rows = db.execute(
+        text(
+            """
+            SELECT id
+            FROM course_chapters
+            WHERE course_id = :course_id
+              AND parent_id = :chapter_id
+            ORDER BY sort_order ASC, created_at ASC
+            """
+        ),
+        {"course_id": course_id, "chapter_id": chapter_id},
+    ).mappings().all()
+    chapter_ids.extend(row["id"] for row in child_rows)
+
+    id_params = {f"chapter_id_{index}": value for index, value in enumerate(chapter_ids)}
+    placeholders = ", ".join(f":{key}" for key in id_params)
+    rows = db.execute(
+        text(
+            f"""
+            SELECT
+                kc.id AS chunk_id,
+                kc.document_id,
+                cd.filename,
+                kc.chapter_id,
+                cc.title AS chapter_title,
+                kc.knowledge_point_id,
+                kp.name AS knowledge_point,
+                kc.section,
+                kc.content,
+                kc.chunk_index,
+                COALESCE(cc.sort_order, 0) AS chapter_sort_order
+            FROM knowledge_chunks kc
+            LEFT JOIN course_documents cd ON cd.id = kc.document_id
+            LEFT JOIN course_chapters cc ON cc.id = kc.chapter_id
+            LEFT JOIN knowledge_points kp ON kp.id = kc.knowledge_point_id
+            WHERE kc.course_id = :course_id
+              AND kc.chapter_id IN ({placeholders})
+              AND COALESCE(kc.deleted, 0) = 0
+              AND COALESCE(cd.status, 'active') <> 'deleted'
+            ORDER BY chapter_sort_order ASC, kc.document_id ASC, kc.chunk_index ASC
+            """
+        ),
+        {"course_id": course_id, **id_params},
+    ).mappings().all()
+
+    chunks = []
+    sources_by_id = {}
+    content_parts = []
+    last_section = None
+
+    for row in rows:
+        if row["document_id"] not in sources_by_id:
+            sources_by_id[row["document_id"]] = {
+                "document_id": row["document_id"],
+                "filename": row["filename"],
+            }
+
+        section_title = row["chapter_title"] or row["section"]
+        if section_title and section_title != last_section:
+            content_parts.append(f"## {section_title}")
+            last_section = section_title
+        content_parts.append(row["content"])
+
+        chunks.append(
+            {
+                "chunk_id": row["chunk_id"],
+                "document_id": row["document_id"],
+                "filename": row["filename"],
+                "chapter_id": row["chapter_id"],
+                "chapter_title": row["chapter_title"],
+                "knowledge_point_id": row["knowledge_point_id"],
+                "knowledge_point": row["knowledge_point"],
+                "section": row["section"],
+                "content": row["content"],
+                "chunk_index": row["chunk_index"],
+            }
+        )
+
+    return {
+        "course_id": course_id,
+        "chapter_id": chapter["id"],
+        "parent_id": chapter["parent_id"],
+        "level": chapter["level"],
+        "title": chapter["title"],
+        "description": chapter["description"],
+        "content": "\n\n".join(content_parts),
+        "chunk_count": len(chunks),
+        "sources": list(sources_by_id.values()),
+        "chunks": chunks,
     }
 
 

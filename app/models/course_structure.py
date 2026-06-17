@@ -128,3 +128,32 @@ class CourseStructureDraft(Base):
     confirmed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CourseSectionLearningContent(Base):
+    """Student-facing learning content generated for a confirmed course section."""
+    __tablename__ = "course_section_learning_contents"
+    __table_args__ = (
+        Index("idx_course_section_learning_contents_course_id", "course_id"),
+        Index("idx_course_section_learning_contents_chapter_id", "chapter_id"),
+        Index("idx_course_section_learning_contents_section_id", "section_id"),
+        Index("idx_course_section_learning_contents_status", "status"),
+    )
+
+    id = Column(String(64), primary_key=True)
+    course_id = Column(String(64), ForeignKey("courses.course_id"), nullable=False)
+    chapter_id = Column(String(64), ForeignKey("course_chapters.id"), nullable=True)
+    section_id = Column(String(64), ForeignKey("course_chapters.id"), nullable=False)
+    knowledge_point_id = Column(String(64), ForeignKey("knowledge_points.id"), nullable=True)
+    title = Column(String(255), nullable=False)
+    content_type = Column(String(50), nullable=False, server_default=text("'student_learning_content'"))
+    content_markdown = Column(Text, nullable=True)
+    content_json = Column(JSON, nullable=True)
+    source_chunk_ids = Column(JSON, nullable=True)
+    generation_prompt = Column(Text, nullable=True)
+    generation_model = Column(String(100), nullable=True)
+    status = Column(String(30), nullable=False, server_default=text("'generated'"))
+    error_message = Column(Text, nullable=True)
+    created_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

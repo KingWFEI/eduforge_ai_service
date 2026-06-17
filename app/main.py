@@ -16,6 +16,7 @@ from app.api.v1 import (
     admin_users,
     auth,
     courses,
+    course_structure_drafts,
     dashboard,
     evaluation,
     exercise,
@@ -333,6 +334,7 @@ def health_check():
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(courses.router, prefix="/api")
+app.include_router(course_structure_drafts.router, prefix="/api")
 app.include_router(home.router)
 app.include_router(onboarding.router, prefix="/api")
 app.include_router(admin_onboarding.router, prefix="/api")

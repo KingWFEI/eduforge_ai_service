@@ -1,4 +1,6 @@
 import json
+import logging
+import re
 import uuid
 from typing import Any
 
@@ -10,8 +12,17 @@ from app.agents.course_structure_agent import CourseStructureAgent
 from app.services.rag_service import (
     extract_text_from_file,
     rebuild_course_document_index_with_structure,
+    search_knowledge_chunks,
 )
 from app.utils.response import AppException, ErrorCode
+
+
+logger = logging.getLogger("app.services.course_structure_service")
+
+MAX_STRUCTURE_SOURCE_CHARS_PER_DOCUMENT = 8000
+MAX_FALLBACK_LINES = 80
+MAX_STRUCTURE_RAG_CHUNKS = 16
+MAX_STRUCTURE_RAG_CHARS = 22000
 
 
 STRUCTURE_SYSTEM_PROMPT = """
@@ -125,6 +136,237 @@ def _normalize_draft(draft: dict[str, Any]) -> dict[str, Any]:
     return {"chapters": normalized_chapters}
 
 
+def _clean_line(line: str) -> str:
+    return re.sub(r"\s+", " ", line).strip(" #*-_\t\r\n")
+
+
+def _looks_like_heading(line: str) -> bool:
+    cleaned = _clean_line(line)
+    if not cleaned or len(cleaned) > 80:
+        return False
+    patterns = [
+        r"^第[一二三四五六七八九十0-9]+[章节讲]",
+        r"^[0-9]+[.、]\s*\S+",
+        r"^[0-9]+[.、][0-9]+",
+        r"^#{1,4}\s*\S+",
+    ]
+    return any(re.search(pattern, line.strip()) for pattern in patterns)
+
+
+def _fallback_course_structure_draft(text_parts: list[str]) -> dict[str, Any]:
+    """Build an editable minimal draft when the LLM output is truncated."""
+
+    headings: list[str] = []
+    for text_part in text_parts:
+        for line in text_part.splitlines():
+            cleaned = _clean_line(line)
+            if _looks_like_heading(line) and cleaned not in headings:
+                headings.append(cleaned[:80])
+            if len(headings) >= MAX_FALLBACK_LINES:
+                break
+        if len(headings) >= MAX_FALLBACK_LINES:
+            break
+
+    if not headings:
+        for text_part in text_parts:
+            for paragraph in re.split(r"\n\s*\n", text_part):
+                cleaned = _clean_line(paragraph)
+                if 8 <= len(cleaned) <= 60 and cleaned not in headings:
+                    headings.append(cleaned)
+                if len(headings) >= 12:
+                    break
+            if headings:
+                break
+
+    if not headings:
+        headings = ["课程核心内容"]
+
+    chapters = []
+    for chapter_index, chapter_title in enumerate(headings[:6], start=1):
+        point_name = re.sub(r"^第[一二三四五六七八九十0-9]+[章节讲]\s*", "", chapter_title)[:50]
+        chapters.append(
+            {
+                "title": chapter_title,
+                "description": "系统根据资料标题自动生成的待审核章节，请管理员确认或修改。",
+                "sections": [
+                    {
+                        "title": chapter_title,
+                        "description": "该小节由系统兜底生成，建议结合原始资料审核。",
+                        "knowledge_points": [
+                            {
+                                "name": point_name or f"知识点{chapter_index}",
+                                "description": "根据课程资料提取的基础知识点。",
+                                "difficulty": "基础",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    return {"chapters": chapters}
+
+
+def _format_structure_chunks(rows: list[dict[str, Any]], source: str) -> list[str]:
+    text_parts = []
+    for index, row in enumerate(rows[:MAX_STRUCTURE_RAG_CHUNKS], start=1):
+        content = str(row.get("content") or "").strip()
+        if not content:
+            continue
+        section = row.get("section") or row.get("filename") or "未知片段"
+        chunk_id = row.get("chunk_id") or row.get("id")
+        text_parts.append(
+            f"来源：{source} #{index}\n"
+            f"chunk_id：{chunk_id}\n"
+            f"片段标题：{section}\n"
+            f"片段内容：\n{content[:1500]}"
+        )
+    return text_parts
+
+
+def _collect_structure_chunks_from_vector_search(
+    db: Session,
+    course_id: str,
+    document_ids: set[str],
+) -> list[dict[str, Any]]:
+    queries = [
+        "目录 章节 小节 知识点 课程大纲",
+        "第 一 二 三 四 五 六 七 八 九 十 章 节 小节",
+        "contents chapter section outline syllabus",
+    ]
+    chunks_by_id: dict[str, dict[str, Any]] = {}
+    for query in queries:
+        try:
+            result = search_knowledge_chunks(
+                db=db,
+                course_id=course_id,
+                query=query,
+                top_k=MAX_STRUCTURE_RAG_CHUNKS,
+            )
+        except Exception as exc:
+            logger.info(
+                "vector structure retrieval skipped | course_id=%s | query=%s | error=%s",
+                course_id,
+                query,
+                exc,
+            )
+            continue
+        for item in result.get("items") or []:
+            if document_ids and item.get("document_id") not in document_ids:
+                continue
+            chunk_id = item.get("chunk_id")
+            if chunk_id and chunk_id not in chunks_by_id:
+                chunks_by_id[chunk_id] = item
+    return list(chunks_by_id.values())
+
+
+def _collect_structure_chunks_from_db(
+    db: Session,
+    course_id: str,
+    document_ids: set[str],
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {"course_id": course_id, "limit": MAX_STRUCTURE_RAG_CHUNKS}
+    document_filter = ""
+    if document_ids:
+        placeholders = []
+        for index, document_id in enumerate(document_ids):
+            key = f"doc_{index}"
+            params[key] = document_id
+            placeholders.append(f":{key}")
+        document_filter = f"AND kc.document_id IN ({', '.join(placeholders)})"
+
+    rows = db.execute(
+        text(
+            f"""
+            SELECT
+                kc.id AS chunk_id,
+                kc.document_id,
+                kc.section,
+                kc.content,
+                kc.chunk_index,
+                cd.filename
+            FROM knowledge_chunks kc
+            LEFT JOIN course_documents cd ON cd.id = kc.document_id
+            WHERE kc.course_id = :course_id
+              {document_filter}
+              AND COALESCE(kc.deleted, 0) = 0
+              AND COALESCE(cd.status, 'active') <> 'deleted'
+              AND (
+                    kc.content LIKE '%目录%'
+                 OR kc.content LIKE '%章%'
+                 OR kc.content LIKE '%小节%'
+                 OR kc.content LIKE '%知识点%'
+                 OR kc.section LIKE '%目录%'
+                 OR kc.section LIKE '%章%'
+              )
+            ORDER BY
+                CASE
+                    WHEN kc.content LIKE '%目录%' OR kc.section LIKE '%目录%' THEN 0
+                    WHEN kc.chunk_index <= 8 THEN 1
+                    ELSE 2
+                END,
+                kc.document_id ASC,
+                kc.chunk_index ASC
+            LIMIT :limit
+            """
+        ),
+        params,
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _collect_structure_text_parts_from_rag(
+    db: Session,
+    course_id: str,
+    documents: list[dict[str, Any]],
+) -> list[str]:
+    document_ids = {document["id"] for document in documents}
+    chunks = _collect_structure_chunks_from_vector_search(
+        db=db,
+        course_id=course_id,
+        document_ids=document_ids,
+    )
+    text_parts = _format_structure_chunks(chunks, "RAG向量检索")
+
+    if len(text_parts) < 3:
+        db_chunks = _collect_structure_chunks_from_db(
+            db=db,
+            course_id=course_id,
+            document_ids=document_ids,
+        )
+        known_chunk_ids = {
+            part.split("chunk_id：", 1)[1].split("\n", 1)[0]
+            for part in text_parts
+            if "chunk_id：" in part
+        }
+        db_chunks = [
+            chunk for chunk in db_chunks
+            if str(chunk.get("chunk_id")) not in known_chunk_ids
+        ]
+        text_parts.extend(_format_structure_chunks(db_chunks, "知识块关键词检索"))
+
+    joined = []
+    total_chars = 0
+    for part in text_parts:
+        if total_chars + len(part) > MAX_STRUCTURE_RAG_CHARS:
+            break
+        joined.append(part)
+        total_chars += len(part)
+    return joined
+
+
+def _collect_structure_text_parts_from_files(
+    documents: list[dict[str, Any]],
+) -> list[str]:
+    text_parts = []
+    for document in documents:
+        content = extract_text_from_file(document["file_path"]).strip()
+        if content:
+            text_parts.append(
+                f"资料：{document['filename']}\n{content[:MAX_STRUCTURE_SOURCE_CHARS_PER_DOCUMENT]}"
+            )
+    return text_parts
+
+
 def _document_rows(
     db: Session,
     course_id: str,
@@ -173,12 +415,63 @@ def generate_course_structure_draft(
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
+    rag_text_parts = _collect_structure_text_parts_from_rag(
+        db=db,
+        course_id=course_id,
+        documents=documents,
+    )
+    if rag_text_parts:
+        try:
+            draft = CourseStructureAgent().run_sync({"text_parts": rag_text_parts})
+        except Exception as exc:
+            logger.warning(
+                "course structure LLM failed, using fallback draft | course_id=%s | document_count=%d | error=%s",
+                course_id,
+                len(documents),
+                exc,
+            )
+            draft = _fallback_course_structure_draft(rag_text_parts)
+
+        normalized_draft = _normalize_draft(draft)
+        draft_id = "csd_" + uuid.uuid4().hex[:12]
+        source_document_ids = [document["id"] for document in documents]
+
+        db.execute(
+            text(
+                """
+                INSERT INTO course_structure_drafts (
+                    id, course_id, source_document_ids_json, draft_json, status,
+                    created_by, created_at, updated_at
+                )
+                VALUES (
+                    :id, :course_id, :source_document_ids_json, :draft_json, 'draft',
+                    :created_by, NOW(), NOW()
+                )
+                """
+            ),
+            {
+                "id": draft_id,
+                "course_id": course_id,
+                "source_document_ids_json": json.dumps(source_document_ids, ensure_ascii=False),
+                "draft_json": json.dumps(normalized_draft, ensure_ascii=False),
+                "created_by": created_by,
+            },
+        )
+        db.commit()
+        return get_course_structure_draft(db, course_id, draft_id)
+
+    logger.info(
+        "no structure-related chunks found, falling back to file prefix | course_id=%s | document_count=%d",
+        course_id,
+        len(documents),
+    )
+
     text_parts = []
     for document in documents:
         content = extract_text_from_file(document["file_path"]).strip()
         if content:
             text_parts.append(
-                f"资料：{document['filename']}\n{content[:12000]}"
+                f"资料：{document['filename']}\n{content[:MAX_STRUCTURE_SOURCE_CHARS_PER_DOCUMENT]}"
             )
     if not text_parts:
         raise AppException(
@@ -187,7 +480,16 @@ def generate_course_structure_draft(
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
-    draft = CourseStructureAgent().run_sync({"text_parts": text_parts})
+    try:
+        draft = CourseStructureAgent().run_sync({"text_parts": text_parts})
+    except Exception as exc:
+        logger.warning(
+            "course structure LLM failed, using fallback draft | course_id=%s | document_count=%d | error=%s",
+            course_id,
+            len(documents),
+            exc,
+        )
+        draft = _fallback_course_structure_draft(text_parts)
     normalized_draft = _normalize_draft(draft)
     draft_id = "csd_" + uuid.uuid4().hex[:12]
     source_document_ids = [document["id"] for document in documents]

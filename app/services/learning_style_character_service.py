@@ -1,4 +1,5 @@
 import json
+import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,11 +12,15 @@ from sqlalchemy.orm import Session
 from app.models.learning_profile import StudentLearningProfile
 from app.models.learning_style_character import LearningStyleCharacter, StudentStyleMatch
 from app.schemas.learning_style_character import LearningStyleCharacterUpdate
+from app.services.llm_service import DeepSeekService
 from app.utils.response import AppException, ErrorCode
+
+logger = logging.getLogger("app.services.learning_style_character_service")
 
 UPLOAD_ROOT = Path("uploads") / "learning-styles"
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 VALID_CHARACTER_STATUSES = {"DRAFT", "PUBLISHED", "DISABLED"}
+LLM_CANDIDATE_LIMIT = 3
 
 
 def parse_json_array(value: str | None, field_name: str) -> list[str]:
@@ -287,6 +292,110 @@ def _score_character(profile_terms: list[str], character: LearningStyleCharacter
     return round(normalized_score, 2), matched_features[:5]
 
 
+def _profile_for_matching(profile: StudentLearningProfile) -> dict[str, Any]:
+    return {
+        "learning_preferences": profile.learning_preferences_json or [],
+        "cognitive_traits": profile.cognitive_traits_json or [],
+        "learning_habits": profile.learning_habits_json or [],
+        "motivation_factors": profile.motivation_factors_json or [],
+        "general_strengths": profile.general_strengths_json or [],
+        "general_challenges": profile.general_challenges_json or [],
+        "preferred_pace": profile.preferred_pace,
+        "available_time": profile.available_time_json or {},
+        "summary": profile.summary,
+        "profile_dimensions": profile.profile_dimensions_json or {},
+    }
+
+
+def _character_candidate(character: LearningStyleCharacter) -> dict[str, Any]:
+    return {
+        "id": character.id,
+        "code": character.code,
+        "name": character.name,
+        "description": character.description,
+        "style_prompt": character.style_prompt,
+        "feature_tags": character.feature_tags or [],
+        "suitable_methods": character.suitable_methods or [],
+        "priority": character.priority or 0,
+    }
+
+
+def _rule_rank_candidates(
+    profile: StudentLearningProfile,
+    characters: list[LearningStyleCharacter],
+    limit: int = LLM_CANDIDATE_LIMIT,
+) -> list[tuple[float, LearningStyleCharacter, list[str]]]:
+    profile_terms = _flatten_profile_terms(profile)
+    scored = []
+    for character in characters:
+        score, matched_features = _score_character(profile_terms, character)
+        scored.append((score, character.priority or 0, character, matched_features))
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [(score, character, matched_features) for score, _, character, matched_features in scored[:limit]]
+
+
+def _validate_llm_match_result(
+    result: dict[str, Any],
+    candidates: list[LearningStyleCharacter],
+) -> tuple[LearningStyleCharacter, float, str, list[str]]:
+    candidate_map = {candidate.id: candidate for candidate in candidates}
+    character_id = result.get("character_id")
+    if character_id not in candidate_map:
+        raise ValueError("DeepSeek returned character_id outside candidate list")
+
+    raw_score = result.get("match_score")
+    if not isinstance(raw_score, (int, float)):
+        raise ValueError("DeepSeek returned invalid match_score")
+    match_score = max(0.0, min(float(raw_score), 1.0))
+
+    raw_reason = result.get("match_reason")
+    match_reason = raw_reason.strip() if isinstance(raw_reason, str) and raw_reason.strip() else None
+    if not match_reason:
+        match_reason = "DeepSeek 已根据当前学习画像匹配该学习风格人物。"
+    match_reason = match_reason[:120]
+
+    raw_features = result.get("matched_features")
+    matched_features = (
+        [item.strip() for item in raw_features if isinstance(item, str) and item.strip()]
+        if isinstance(raw_features, list)
+        else []
+    )
+    return candidate_map[character_id], round(match_score, 2), match_reason, matched_features[:5]
+
+
+def _match_with_deepseek(
+    profile: StudentLearningProfile,
+    candidates: list[LearningStyleCharacter],
+) -> tuple[LearningStyleCharacter, float, str, list[str]]:
+    system_prompt = (
+        "你是 EduForge AI 的学习风格匹配助手。"
+        "你只能从用户提供的候选学习风格人物中选择 1 个最匹配的。"
+        "必须只输出合法 JSON 对象，字段为 character_id、match_score、match_reason、matched_features。"
+        "character_id 必须来自候选列表，match_score 必须是 0 到 1 的数字，"
+        "match_reason 是给学生看的简短说明。"
+    )
+    user_prompt = json.dumps(
+        {
+            "student_profile": _profile_for_matching(profile),
+            "candidates": [_character_candidate(candidate) for candidate in candidates],
+            "output_schema": {
+                "character_id": "候选人物 id",
+                "match_score": "0 到 1 的数字",
+                "match_reason": "不超过 80 个中文字符",
+                "matched_features": ["命中的学习画像特征"],
+            },
+        },
+        ensure_ascii=False,
+    )
+    result = DeepSeekService().generate_json_sync(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        max_tokens=600,
+        temperature=0.1,
+    )
+    return _validate_llm_match_result(result, candidates)
+
+
 def _build_reason(character: LearningStyleCharacter, matched_features: list[str]) -> str:
     if matched_features:
         features = "、".join(matched_features[:3])
@@ -346,7 +455,11 @@ def get_student_learning_style_character(db: Session, *, student_id: str) -> dic
         .order_by(StudentStyleMatch.updated_at.desc())
         .first()
     )
-    if existing_match is not None and existing_match.profile_version == (profile.version or 1):
+    if (
+        existing_match is not None
+        and existing_match.profile_version == (profile.version or 1)
+        and existing_match.matching_source == "deepseek"
+    ):
         cached_character = (
             db.query(LearningStyleCharacter)
             .filter(
@@ -372,13 +485,26 @@ def get_student_learning_style_character(db: Session, *, student_id: str) -> dic
             "character": None,
         }
 
-    profile_terms = _flatten_profile_terms(profile)
-    scored = []
-    for character in characters:
-        score, matched_features = _score_character(profile_terms, character)
-        scored.append((score, character.priority or 0, character, matched_features))
-    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    score, _, best_character, matched_features = scored[0]
+    ranked_candidates = _rule_rank_candidates(profile, characters)
+    fallback_score, fallback_character, fallback_features = ranked_candidates[0]
+    try:
+        best_character, score, match_reason, matched_features = _match_with_deepseek(
+            profile=profile,
+            candidates=[candidate for _, candidate, _ in ranked_candidates],
+        )
+        matching_source = "deepseek"
+    except Exception as exc:
+        logger.warning(
+            "DeepSeek learning style match failed, using rule fallback | student_id=%s | profile_id=%s | error=%s",
+            student_id,
+            profile.id,
+            exc,
+        )
+        best_character = fallback_character
+        score = fallback_score
+        matched_features = fallback_features
+        match_reason = _build_reason(best_character, matched_features)
+        matching_source = "rule_fallback"
 
     match = existing_match or StudentStyleMatch(
         id=uuid4().hex,
@@ -389,9 +515,9 @@ def get_student_learning_style_character(db: Session, *, student_id: str) -> dic
     match.character_id = best_character.id
     match.character_version = best_character.version or 1
     match.match_score = score
-    match.match_reason = _build_reason(best_character, matched_features)
+    match.match_reason = match_reason
     match.matched_features = matched_features
-    match.matching_source = "rule"
+    match.matching_source = matching_source
     match.updated_at = datetime.now(timezone.utc)
     db.add(match)
     db.commit()

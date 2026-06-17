@@ -126,9 +126,14 @@ class CourseChapterCreateResponse(BaseModel):
 class CourseChapterItem(BaseModel):
     chapter_id: str = Field(..., description="章节ID")
     course_id: str = Field(..., description="课程ID")
+    parent_id: Optional[str] = Field(None, description="父章节ID")
+    level: int = Field(1, description="章节层级")
     title: str = Field(..., description="章节标题")
     description: Optional[str] = Field(None, description="章节说明")
     sort_order: int = Field(..., description="章节排序")
+    chunk_count: int = Field(0, description="章节内容片段数量")
+    has_content: bool = Field(False, description="是否已有章节内容")
+    content_preview: Optional[str] = Field(None, description="章节内容预览")
     created_at: Optional[str] = Field(None, description="创建时间")
     updated_at: Optional[str] = Field(None, description="更新时间")
 
@@ -137,6 +142,37 @@ class CourseChapterListResponse(BaseModel):
     course_id: str = Field(..., description="课程ID")
     total: int = Field(..., description="章节数量")
     items: List[CourseChapterItem] = Field(default_factory=list, description="章节列表")
+
+
+class CourseChapterContentChunk(BaseModel):
+    chunk_id: str = Field(..., description="知识块ID")
+    document_id: str = Field(..., description="文档ID")
+    filename: Optional[str] = Field(None, description="文档名")
+    chapter_id: Optional[str] = Field(None, description="归属章节ID")
+    chapter_title: Optional[str] = Field(None, description="归属章节标题")
+    knowledge_point_id: Optional[str] = Field(None, description="知识点ID")
+    knowledge_point: Optional[str] = Field(None, description="知识点名称")
+    section: Optional[str] = Field(None, description="片段标题")
+    content: str = Field(..., description="片段内容")
+    chunk_index: int = Field(..., description="片段序号")
+
+
+class CourseChapterContentSource(BaseModel):
+    document_id: str = Field(..., description="文档ID")
+    filename: Optional[str] = Field(None, description="文档名")
+
+
+class CourseChapterContentResponse(BaseModel):
+    course_id: str = Field(..., description="课程ID")
+    chapter_id: str = Field(..., description="章节ID")
+    parent_id: Optional[str] = Field(None, description="父章节ID")
+    level: int = Field(1, description="章节层级")
+    title: str = Field(..., description="章节标题")
+    description: Optional[str] = Field(None, description="章节说明")
+    content: str = Field("", description="按章节汇总的可阅读内容")
+    chunk_count: int = Field(0, description="知识块数量")
+    sources: List[CourseChapterContentSource] = Field(default_factory=list, description="内容来源文档")
+    chunks: List[CourseChapterContentChunk] = Field(default_factory=list, description="原始知识块列表")
 
 
 class KnowledgePointCreate(BaseModel):

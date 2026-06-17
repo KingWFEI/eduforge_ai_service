@@ -6,8 +6,8 @@ from app.core.dependencies import get_current_user, require_role
 from app.db.session import get_db
 from app.models.course import Course
 from app.models.user import User
-from app.schemas.course import CourseCreate, CourseResponse, CourseUploadResponse, CourseDocumentListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse
-from app.services.course_service import list_course_documents, list_course_knowledge_chunks, delete_course_document, create_course_chapter, list_course_chapters, create_knowledge_point, list_knowledge_points, list_vector_index_records, link_course_document_to_chapter_and_knowledge_point, reindex_course_document
+from app.schemas.course import CourseCreate, CourseResponse, CourseUploadResponse, CourseDocumentListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, CourseChapterContentResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse
+from app.services.course_service import archive_course, list_course_documents, list_course_knowledge_chunks, delete_course_document, create_course_chapter, list_course_chapters, get_course_chapter_content, create_knowledge_point, list_knowledge_points, list_vector_index_records, link_course_document_to_chapter_and_knowledge_point, reindex_course_document
 from app.services.course_structure_service import generate_course_structure_draft, get_course_structure_draft, update_course_structure_draft, confirm_course_structure_draft
 from app.services.rag_service import upload_and_index_course_document
 from app.schemas.common import PageResponse
@@ -86,6 +86,22 @@ def get_course(
         )
 
     return success(course)
+
+
+@router.delete("/{course_id}", response_model=ApiResponse[bool])
+def delete_course(
+    course_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+):
+    """删除或归档课程。管理员或课程创建教师可操作。"""
+    data = archive_course(
+        db=db,
+        course_id=course_id,
+        current_user_id=current_user.id,
+        current_user_role=current_user.role,
+    )
+    return success(data, message="课程已归档")
 
 
 @router.post("/{course_id}/upload", response_model=ApiResponse[CourseUploadResponse])
@@ -324,7 +340,7 @@ def confirm_structure_draft(
 def get_course_chapters(
     course_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
 ):
     """
     获取课程章节列表。
@@ -335,6 +351,30 @@ def get_course_chapters(
     data = list_course_chapters(
         db=db,
         course_id=course_id,
+    )
+    return success(data)
+
+
+@router.get(
+    "/{course_id}/chapters/{chapter_id}/content",
+    response_model=ApiResponse[CourseChapterContentResponse],
+)
+def get_chapter_content(
+    course_id: str,
+    chapter_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
+):
+    """
+    获取章节正文。
+
+    学生端点击课程目录章节时调用：
+    GET /api/courses/{course_id}/chapters/{chapter_id}/content
+    """
+    data = get_course_chapter_content(
+        db=db,
+        course_id=course_id,
+        chapter_id=chapter_id,
     )
     return success(data)
 
