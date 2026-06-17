@@ -17,6 +17,7 @@ TABLE_DESCRIPTIONS = {
     "courses": "课程",
     "course_chapters": "课程章节",
     "knowledge_points": "知识点",
+    "student_section_progress": "学生课程小节学习进度",
     "course_documents": "课程资料",
     "knowledge_chunks": "知识块",
     "vector_index_records": "向量索引记录",
@@ -199,6 +200,14 @@ TABLE_COLUMN_COMMENTS = {
     "knowledge_points": {
         "name": "知识点名称",
         "difficulty": "知识点难度，可选值如 easy、medium、hard",
+    },
+    "student_section_progress": {
+        "student_id": "学生ID，对应用户主键的字符串形式",
+        "course_id": "课程业务ID",
+        "section_id": "课程小节ID，对应二级课程章节",
+        "progress": "学习进度，范围0.0到1.0",
+        "status": "学习状态，可选值：completed、learning、unlearned、locked",
+        "last_study_at": "最后学习时间",
     },
     "vector_index_records": {
         "status": "索引任务状态，可选值如 processing、completed、failed",

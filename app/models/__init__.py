@@ -4,6 +4,7 @@ from app.models.verification_code import VerificationCode
 from app.models.login_log import LoginLog
 from app.models.course import Course
 from app.models.course_structure import CourseChapter, KnowledgePoint, CourseDocument, KnowledgeChunk, VectorIndexRecord, CourseStructureDraft, CourseSectionLearningContent
+from app.models.course_structure import CourseChapter, KnowledgePoint, StudentSectionProgress, CourseDocument, KnowledgeChunk, VectorIndexRecord, CourseStructureDraft
 from app.models.onboarding import OnboardingSurvey, OnboardingQuestion, OnboardingOption, OnboardingSubmission, OnboardingAnswer
 from app.models.student_profile import StudentProfile
 from app.models.learning_profile import StudentLearningProfile, StudentDomainCompetency, StudentLearningContext
@@ -36,7 +37,6 @@ __all__ = [
     "KnowledgeChunk",
     "VectorIndexRecord",
     "CourseStructureDraft",
-    "CourseSectionLearningContent",
     "OnboardingSurvey",
     "OnboardingQuestion",
     "OnboardingOption",
