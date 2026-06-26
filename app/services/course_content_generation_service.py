@@ -12,6 +12,7 @@ from app.agents.student_learning_content_agent import StudentLearningContentAgen
 from app.db.session import SessionLocal
 from app.models.resource_agent import AgentTask
 from app.models.user import User
+from app.services.document_asset_service import append_source_images
 from app.services.rag_service import rebuild_course_document_index_with_structure, search_knowledge_chunks
 from app.utils.response import AppException, ErrorCode
 
@@ -309,6 +310,7 @@ def create_content_generation_task(
         course_id=draft_record["course_id"],
         status="pending",
         progress=0,
+        current_step="任务已进入队列",
         input_json={
             "draft_id": draft_id,
             "created_by": str(current_user.id),
@@ -620,6 +622,43 @@ def _retrieve_rag_context_for_section(
     course_id: str,
     section: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    exact_rows = db.execute(
+        text(
+            """
+            SELECT
+                kc.id AS chunk_id,
+                kc.document_id,
+                kc.course_id,
+                kc.chapter_id,
+                kc.knowledge_point_id,
+                kc.section,
+                kc.content,
+                kc.chunk_index
+            FROM knowledge_chunks kc
+            JOIN course_documents cd ON cd.id = kc.document_id
+            WHERE kc.course_id = :course_id
+              AND kc.chapter_id = :section_id
+              AND COALESCE(kc.deleted, 0) = 0
+              AND COALESCE(cd.status, 'active') <> 'deleted'
+            ORDER BY kc.document_id ASC, kc.chunk_index ASC
+            LIMIT 12
+            """
+        ),
+        {
+            "course_id": course_id,
+            "section_id": section["section_id"],
+        },
+    ).mappings().all()
+    items = [
+        {
+            **dict(row),
+            "score": 1.0,
+            "retrieval_type": "section",
+        }
+        for row in exact_rows
+    ]
+    known_chunk_ids = {item["chunk_id"] for item in items}
+
     point_names = [point["name"] for point in section.get("knowledge_points") or []]
     query = " ".join(
         value
@@ -632,7 +671,7 @@ def _retrieve_rag_context_for_section(
         if value
     )
     if not query.strip():
-        return []
+        return items
 
     try:
         result = search_knowledge_chunks(
@@ -642,11 +681,16 @@ def _retrieve_rag_context_for_section(
             top_k=8,
             chapter_id=section["section_id"],
         )
-        items = result.get("items") or []
-        if items:
-            return items
+        for item in result.get("items") or []:
+            if item.get("chunk_id") not in known_chunk_ids:
+                item["retrieval_type"] = "section_vector"
+                items.append(item)
+                known_chunk_ids.add(item.get("chunk_id"))
     except Exception:
         pass
+
+    if len(items) >= 12:
+        return items[:12]
 
     try:
         result = search_knowledge_chunks(
@@ -655,9 +699,16 @@ def _retrieve_rag_context_for_section(
             query=query,
             top_k=8,
         )
-        return result.get("items") or []
+        for item in result.get("items") or []:
+            if item.get("chunk_id") not in known_chunk_ids:
+                item["retrieval_type"] = "course_vector"
+                items.append(item)
+                known_chunk_ids.add(item.get("chunk_id"))
+            if len(items) >= 12:
+                break
     except Exception:
-        return []
+        pass
+    return items[:12]
 
 
 def _save_section_learning_content(
@@ -843,6 +894,10 @@ def confirm_draft_and_generate_learning_contents(
                     "rag_chunks": rag_chunks,
                 }
             )
+            agent_result["content_markdown"] = append_source_images(
+                agent_result.get("content_markdown"),
+                rag_chunks,
+            )
             source_chunk_ids = [
                 item["chunk_id"]
                 for item in rag_chunks
@@ -1027,6 +1082,10 @@ def generate_learning_contents_for_confirmed_draft(
                     "course_structure": draft_record["draft"],
                     "rag_chunks": rag_chunks,
                 }
+            )
+            agent_result["content_markdown"] = append_source_images(
+                agent_result.get("content_markdown"),
+                rag_chunks,
             )
             source_chunk_ids = [
                 item["chunk_id"]

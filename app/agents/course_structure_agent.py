@@ -32,12 +32,12 @@ COURSE_STRUCTURE_SYSTEM_PROMPT = """
 严格要求：
 1. 只输出 JSON，不要输出 Markdown，不要输出解释文字。
 2. 章节、小节、知识点必须来自给定候选片段，不要凭空扩展。
-3. 最多输出 6 个章节。
-4. 每个章节最多输出 4 个小节。
-5. 每个小节最多输出 4 个知识点。
+3. 必须优先保留“文档完整目录”中的全部一级章节和二级小节，不得只保留部分章节。
+4. 最多输出 12 个章节，每个章节最多输出 20 个小节。
+5. 每个小节输出 1 至 3 个核心知识点。
 6. difficulty 只能使用：基础、中等、较难。
 7. title、name 要短，description 要短，不要复述原文段落。
-8. 输入通常是 RAG 检索出的目录/标题候选片段，请将它们整理成完整、去重、层级清晰的课程目录。
+8. 输入包含完整目录树和正文摘要。目录树决定章节层级，正文摘要仅用于补充描述和知识点。
 """
 
 
@@ -52,13 +52,13 @@ class CourseStructureAgent(BaseAgent):
     def run_sync(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         text_parts = input_data["text_parts"]
         prompt = (
-            "请根据以下由 RAG 检索出的目录、章节、标题或大纲候选片段，生成精简课程结构草稿。"
-            "请合并重复标题，修正层级关系，只保留最适合管理员审核的目录结构。\n\n"
+            "请根据以下文档完整目录和小节正文摘要生成课程结构草稿。"
+            "必须保留完整目录中的一级章节和二级小节，合并重复目录，但不要因篇幅省略后半部分章节。\n\n"
             + "\n\n---\n\n".join(text_parts)[:24000]
         )
         return self.llm_service.generate_json_sync(
             system_prompt=COURSE_STRUCTURE_SYSTEM_PROMPT,
             user_prompt=prompt,
-            max_tokens=4000,
+            max_tokens=8000,
             temperature=0.1,
         )

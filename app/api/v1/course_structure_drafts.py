@@ -9,6 +9,7 @@ from app.core.dependencies import require_role
 from app.db.session import SessionLocal
 from app.db.session import get_db
 from app.models.user import User
+from app.schemas.course import CourseStructureConfirmResponse, CourseStructureDraftConfirmRequest
 from app.schemas.course_content import (
     ContentGenerationTaskStatusResponse,
     SectionLearningContentListResponse,
@@ -20,11 +21,38 @@ from app.services.course_content_generation_service import (
     list_section_learning_contents,
     run_content_generation_task,
 )
+from app.services.course_structure_service import (
+    confirm_course_structure_draft,
+    get_course_structure_draft_by_id,
+)
 from app.utils.response import ApiResponse, success
 from app.utils.sse import sse_event
 
 
 router = APIRouter(prefix="/course-structure-drafts", tags=["课程结构草稿"])
+
+
+@router.post(
+    "/{draft_id}/confirm",
+    response_model=ApiResponse[CourseStructureConfirmResponse],
+)
+def confirm_structure_draft(
+    draft_id: str,
+    payload: CourseStructureDraftConfirmRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+):
+    """确认管理员编辑后的章节结构，并保存为正式章节/小节/知识点。"""
+    draft_record = get_course_structure_draft_by_id(db=db, draft_id=draft_id)
+    data = confirm_course_structure_draft(
+        db=db,
+        course_id=draft_record["course_id"],
+        draft_id=draft_id,
+        confirmed_by=str(current_user.id),
+        draft=payload.draft,
+        rebuild_index=payload.rebuild_index,
+    )
+    return success(data, message="章节保存成功")
 
 
 @router.post(

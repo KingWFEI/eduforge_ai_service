@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.utils.response import AppException, ErrorCode
+from app.services.document_asset_service import extract_image_urls, load_document_assets
 from app.services.rag_service import (
     delete_document_chunks_from_chroma,
     rebuild_course_document_index_with_structure,
@@ -69,6 +70,7 @@ def list_course_documents(
                 "uploaded_by": row["uploaded_by"],
                 "uploaded_at": row["uploaded_at"].isoformat() if row["uploaded_at"] else None,
                 "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+                "assets": load_document_assets(row["course_id"], row["id"]),
             }
         )
 
@@ -76,6 +78,40 @@ def list_course_documents(
         "course_id": course_id,
         "total": len(items),
         "items": items,
+    }
+
+
+def get_course_document_assets(
+    db: Session,
+    course_id: str,
+    document_id: str,
+) -> dict:
+    document = db.execute(
+        text(
+            """
+            SELECT id, filename
+            FROM course_documents
+            WHERE id = :document_id
+              AND course_id = :course_id
+              AND COALESCE(status, 'active') <> 'deleted'
+            LIMIT 1
+            """
+        ),
+        {"course_id": course_id, "document_id": document_id},
+    ).mappings().first()
+    if document is None:
+        raise AppException(
+            code=ErrorCode.NOT_FOUND,
+            message="课程资料不存在",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    assets = load_document_assets(course_id, document_id)
+    return {
+        "course_id": course_id,
+        "document_id": document_id,
+        "filename": document["filename"],
+        "total": len(assets),
+        "items": assets,
     }
 
 
@@ -270,6 +306,7 @@ def list_course_knowledge_chunks(
                 "page": row["page_no"],
                 "chunk_index": row["chunk_index"],
                 "indexed": bool(row["indexed"]),
+                "images": extract_image_urls(row["content"]),
             }
         )
 
@@ -688,6 +725,7 @@ def get_course_chapter_content(
                 "section": row["section"],
                 "content": row["content"],
                 "chunk_index": row["chunk_index"],
+                "images": extract_image_urls(row["content"]),
             }
         )
 

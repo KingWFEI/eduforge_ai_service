@@ -6,15 +6,18 @@ from typing import Any, List
 
 import chromadb
 import numpy as np
-from docx import Document
 from fastapi import UploadFile, status
-from pptx import Presentation
-from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.agents.chunk_classifier_agent import ChunkClassifierAgent
+from app.services.document_asset_service import load_document_assets, prepare_document_assets
+from app.services.markdown_document_service import (
+    convert_file_to_markdown,
+    match_chunk_to_structure,
+    split_markdown_into_chunks,
+)
 from app.services.llm_service import DeepSeekService
 from app.utils.response import AppException, ErrorCode
 
@@ -101,10 +104,7 @@ def get_chroma_collection():
 
 
 def extract_text_from_file(file_path: str) -> str:
-    """
-    从上传文件中提取文本。
-    支持：txt、md、csv、json、py、dot、pdf、docx、pptx、ipynb
-    """
+    """Convert an uploaded document to Markdown-compatible text."""
     suffix = Path(file_path).suffix.lower()
 
     if suffix not in SUPPORTED_DOCUMENT_EXTENSIONS:
@@ -114,68 +114,7 @@ def extract_text_from_file(file_path: str) -> str:
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
-    if suffix in [".txt", ".md", ".py", ".json", ".csv", ".dot"]:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
-
-    if suffix == ".pdf":
-        reader = PdfReader(file_path)
-        texts = []
-
-        for page in reader.pages:
-            page_text = page.extract_text() or ""
-            texts.append(page_text)
-
-        return "\n".join(texts)
-
-    if suffix == ".docx":
-        doc = Document(file_path)
-        return "\n".join([p.text for p in doc.paragraphs])
-
-    if suffix == ".pptx":
-        presentation = Presentation(file_path)
-        texts = []
-        for slide_index, slide in enumerate(presentation.slides, start=1):
-            slide_texts = []
-            for shape in slide.shapes:
-                if hasattr(shape, "text") and shape.text:
-                    slide_texts.append(shape.text.strip())
-            if slide_texts:
-                texts.append(f"【第 {slide_index} 页】\n" + "\n".join(slide_texts))
-        return "\n\n".join(texts)
-
-    if suffix == ".ipynb":
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            notebook = json.load(f)
-
-        texts = []
-
-        for cell in notebook.get("cells", []):
-            cell_type = cell.get("cell_type")
-            source = cell.get("source", [])
-
-            if isinstance(source, list):
-                source_text = "".join(source)
-            else:
-                source_text = str(source)
-
-            if not source_text.strip():
-                continue
-
-            if cell_type == "markdown":
-                texts.append("【Markdown说明】\n" + source_text)
-            elif cell_type == "code":
-                texts.append("【代码单元】\n" + source_text)
-            else:
-                texts.append(source_text)
-
-        return "\n\n".join(texts)
-
-    raise AppException(
-        code=ErrorCode.PARAM_ERROR,
-        message=SUPPORTED_DOCUMENT_TYPES_MESSAGE,
-        status_code=status.HTTP_400_BAD_REQUEST,
-    )
+    return convert_file_to_markdown(file_path)
 
 
 def split_text(text_value: str, chunk_size: int = 500, overlap: int = 80) -> List[str]:
@@ -419,9 +358,15 @@ def rebuild_course_document_index_with_structure(
         )
 
     structure_items = _load_course_structure(db, course_id)
-    raw_text = extract_text_from_file(document["file_path"])
-    chunks = split_text(raw_text)
-    if not chunks:
+    markdown = extract_text_from_file(document["file_path"])
+    markdown, assets = prepare_document_assets(
+        markdown=markdown,
+        file_path=document["file_path"],
+        course_id=course_id,
+        document_id=document_id,
+    )
+    structured_chunks = split_markdown_into_chunks(markdown)
+    if not structured_chunks:
         raise AppException(
             code=ErrorCode.PARAM_ERROR,
             message="文件内容为空，无法生成知识块。如果是扫描版 PDF，需要 OCR。",
@@ -472,29 +417,53 @@ def rebuild_course_document_index_with_structure(
     embeddings = []
     metadatas = []
     first_chapter_id = None
+    deterministic_assignments = {
+        index: match_chunk_to_structure(chunk, structure_items)
+        for index, chunk in enumerate(structured_chunks)
+    }
+    unresolved_indexes = [
+        index
+        for index, assignment in deterministic_assignments.items()
+        if assignment[0] is None
+    ]
+    llm_assignments: dict[int, tuple[str | None, str | None, list[str]]] = {}
     try:
         classifier_result = ChunkClassifierAgent().run_sync(
             {
-                "chunks": chunks,
+                "chunks": [
+                    structured_chunks[index].content
+                    for index in unresolved_indexes
+                ],
                 "structure_items": structure_items,
                 "batch_size": 12,
             }
         )
-        llm_assignments = classifier_result.get("assignments", {})
-        if not isinstance(llm_assignments, dict):
-            llm_assignments = {}
+        unresolved_assignments = classifier_result.get("assignments", {})
+        if isinstance(unresolved_assignments, dict):
+            llm_assignments = {
+                unresolved_indexes[relative_index]: assignment
+                for relative_index, assignment in unresolved_assignments.items()
+                if isinstance(relative_index, int)
+                and 0 <= relative_index < len(unresolved_indexes)
+            }
     except Exception:
         llm_assignments = {}
 
-    for index, chunk in enumerate(chunks):
+    for index, structured_chunk in enumerate(structured_chunks):
+        chunk = structured_chunk.content
         chunk_id = "chunk_" + uuid.uuid4().hex[:12]
-        chapter_id, knowledge_point_id, keywords = llm_assignments.get(
-            index,
-            _infer_chunk_structure(chunk, structure_items),
+        deterministic = deterministic_assignments[index]
+        chapter_id, knowledge_point_id, keywords = (
+            deterministic
+            if deterministic[0] is not None
+            else llm_assignments.get(
+                index,
+                _infer_chunk_structure(chunk, structure_items),
+            )
         )
         if first_chapter_id is None and chapter_id:
             first_chapter_id = chapter_id
-        section = document["filename"] + f" - 片段 {index + 1}"
+        section = (structured_chunk.section or document["filename"])[:200]
         embedding = embed_text(chunk)
         metadata = {
             "course_id": course_id,
@@ -503,6 +472,9 @@ def rebuild_course_document_index_with_structure(
             "chunk_index": index,
             "section": section,
             "vector_id": chunk_id,
+            "heading_title": structured_chunk.heading_title or "",
+            "heading_level": structured_chunk.heading_level or 0,
+            "heading_path": " > ".join(structured_chunk.heading_path),
         }
         if chapter_id:
             metadata["chapter_id"] = chapter_id
@@ -560,7 +532,7 @@ def rebuild_course_document_index_with_structure(
         ),
         {
             "chapter_id": first_chapter_id,
-            "chunk_count": len(chunks),
+            "chunk_count": len(structured_chunks),
             "document_id": document_id,
             "course_id": course_id,
         },
@@ -579,16 +551,18 @@ def rebuild_course_document_index_with_structure(
             """
         ),
         {
-            "chunk_count": len(chunks),
-            "success_count": len(chunks),
+            "chunk_count": len(structured_chunks),
+            "success_count": len(structured_chunks),
             "index_record_id": index_record_id,
         },
     )
 
     return {
         "document_id": document_id,
-        "chunk_count": len(chunks),
+        "chunk_count": len(structured_chunks),
         "index_record_id": index_record_id,
+        "asset_count": len(assets),
+        "assets": load_document_assets(course_id, document_id),
     }
 
 
@@ -794,11 +768,17 @@ def upload_and_index_course_document(
 
         db.commit()
 
-        # 4. 解析文本
-        raw_text = extract_text_from_file(str(file_path))
-        chunks = split_text(raw_text)
+        # 4. 转换为 Markdown，并按标题层级切分
+        markdown = extract_text_from_file(str(file_path))
+        markdown, assets = prepare_document_assets(
+            markdown=markdown,
+            file_path=str(file_path),
+            course_id=course_id,
+            document_id=document_id,
+        )
+        structured_chunks = split_markdown_into_chunks(markdown)
 
-        if not chunks:
+        if not structured_chunks:
             raise AppException(
                 code=ErrorCode.PARAM_ERROR,
                 message="文件内容为空，无法生成知识块。如果是扫描版 PDF，需要 OCR。",
@@ -815,9 +795,12 @@ def upload_and_index_course_document(
 
         mysql_chunk_rows = []
 
-        for index, chunk in enumerate(chunks):
+        for index, structured_chunk in enumerate(structured_chunks):
+            chunk = structured_chunk.content
             chunk_id = "chunk_" + uuid.uuid4().hex[:12]
-            section = f"{file.filename} - 片段 {index + 1}"
+            section = (
+                structured_chunk.section or f"{file.filename} - 片段 {index + 1}"
+            )[:200]
             embedding = embed_text(chunk)
 
             # Chroma 数据
@@ -831,6 +814,9 @@ def upload_and_index_course_document(
                 "chunk_index": index,
                 "section": section,
                 "vector_id": chunk_id,
+                "heading_title": structured_chunk.heading_title or "",
+                "heading_level": structured_chunk.heading_level or 0,
+                "heading_path": " > ".join(structured_chunk.heading_path),
             }
             if chapter_id:
                 metadata["chapter_id"] = chapter_id
@@ -914,7 +900,7 @@ def upload_and_index_course_document(
                 """
             ),
             {
-                "chunk_count": len(chunks),
+                "chunk_count": len(structured_chunks),
                 "document_id": document_id,
                 "course_id": course_id,
             },
@@ -935,8 +921,8 @@ def upload_and_index_course_document(
                 """
             ),
             {
-                "chunk_count": len(chunks),
-                "success_count": len(chunks),
+                "chunk_count": len(structured_chunks),
+                "success_count": len(structured_chunks),
                 "index_record_id": index_record_id,
             },
         )
@@ -947,9 +933,11 @@ def upload_and_index_course_document(
             "document_id": document_id,
             "course_id": course_id,
             "filename": file.filename,
-            "chunk_count": len(chunks),
+            "chunk_count": len(structured_chunks),
             "parse_status": "parsed",
             "index_status": "indexed",
+            "asset_count": len(assets),
+            "assets": load_document_assets(course_id, document_id),
         }
 
     except Exception as e:

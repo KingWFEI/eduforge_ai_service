@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.agents.course_structure_agent import CourseStructureAgent
+from app.services.markdown_document_service import build_structure_context
 from app.services.rag_service import (
     extract_text_from_file,
     rebuild_course_document_index_with_structure,
@@ -362,7 +363,8 @@ def _collect_structure_text_parts_from_files(
         content = extract_text_from_file(document["file_path"]).strip()
         if content:
             text_parts.append(
-                f"资料：{document['filename']}\n{content[:MAX_STRUCTURE_SOURCE_CHARS_PER_DOCUMENT]}"
+                f"资料：{document['filename']}\n"
+                f"{build_structure_context(content, max_chars=MAX_STRUCTURE_RAG_CHARS)}"
             )
     return text_parts
 
@@ -415,14 +417,10 @@ def generate_course_structure_draft(
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
-    rag_text_parts = _collect_structure_text_parts_from_rag(
-        db=db,
-        course_id=course_id,
-        documents=documents,
-    )
-    if rag_text_parts:
+    structure_text_parts = _collect_structure_text_parts_from_files(documents)
+    if structure_text_parts:
         try:
-            draft = CourseStructureAgent().run_sync({"text_parts": rag_text_parts})
+            draft = CourseStructureAgent().run_sync({"text_parts": structure_text_parts})
         except Exception as exc:
             logger.warning(
                 "course structure LLM failed, using fallback draft | course_id=%s | document_count=%d | error=%s",
@@ -430,7 +428,7 @@ def generate_course_structure_draft(
                 len(documents),
                 exc,
             )
-            draft = _fallback_course_structure_draft(rag_text_parts)
+            draft = _fallback_course_structure_draft(structure_text_parts)
 
         normalized_draft = _normalize_draft(draft)
         draft_id = "csd_" + uuid.uuid4().hex[:12]
@@ -460,20 +458,12 @@ def generate_course_structure_draft(
         db.commit()
         return get_course_structure_draft(db, course_id, draft_id)
 
-    logger.info(
-        "no structure-related chunks found, falling back to file prefix | course_id=%s | document_count=%d",
-        course_id,
-        len(documents),
+    rag_text_parts = _collect_structure_text_parts_from_rag(
+        db=db,
+        course_id=course_id,
+        documents=documents,
     )
-
-    text_parts = []
-    for document in documents:
-        content = extract_text_from_file(document["file_path"]).strip()
-        if content:
-            text_parts.append(
-                f"资料：{document['filename']}\n{content[:MAX_STRUCTURE_SOURCE_CHARS_PER_DOCUMENT]}"
-            )
-    if not text_parts:
+    if not rag_text_parts:
         raise AppException(
             code=ErrorCode.PARAM_ERROR,
             message="课程资料没有可解析文本，无法生成课程结构",
@@ -481,7 +471,7 @@ def generate_course_structure_draft(
         )
 
     try:
-        draft = CourseStructureAgent().run_sync({"text_parts": text_parts})
+        draft = CourseStructureAgent().run_sync({"text_parts": rag_text_parts})
     except Exception as exc:
         logger.warning(
             "course structure LLM failed, using fallback draft | course_id=%s | document_count=%d | error=%s",
@@ -489,7 +479,7 @@ def generate_course_structure_draft(
             len(documents),
             exc,
         )
-        draft = _fallback_course_structure_draft(text_parts)
+        draft = _fallback_course_structure_draft(rag_text_parts)
     normalized_draft = _normalize_draft(draft)
     draft_id = "csd_" + uuid.uuid4().hex[:12]
     source_document_ids = [document["id"] for document in documents]
@@ -548,6 +538,31 @@ def get_course_structure_draft(db: Session, course_id: str, draft_id: str) -> di
         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
         "confirmed_at": row["confirmed_at"].isoformat() if row["confirmed_at"] else None,
     }
+
+
+def get_course_structure_draft_by_id(db: Session, draft_id: str) -> dict:
+    row = db.execute(
+        text(
+            """
+            SELECT course_id
+            FROM course_structure_drafts
+            WHERE id = :draft_id
+            LIMIT 1
+            """
+        ),
+        {"draft_id": draft_id},
+    ).mappings().first()
+    if row is None:
+        raise AppException(
+            code=ErrorCode.NOT_FOUND,
+            message="课程结构草稿不存在",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return get_course_structure_draft(
+        db=db,
+        course_id=row["course_id"],
+        draft_id=draft_id,
+    )
 
 
 def update_course_structure_draft(

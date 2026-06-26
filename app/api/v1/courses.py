@@ -7,10 +7,8 @@ from app.db.session import get_db
 from app.models.course import Course
 from app.models.course_structure import CourseChapter, KnowledgePoint
 from app.models.user import User
-from app.schemas.course import CourseCreate, CourseResponse, CourseUploadResponse, CourseDocumentListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, CourseChapterContentResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse
-from app.services.course_service import archive_course, list_course_documents, list_course_knowledge_chunks, delete_course_document, create_course_chapter, list_course_chapters, get_course_chapter_content, create_knowledge_point, list_knowledge_points, list_vector_index_records, link_course_document_to_chapter_and_knowledge_point, reindex_course_document
-from app.schemas.course import CourseCreate, CourseResponse, CourseDetailResponse, CourseSyllabusResponse, CourseUploadResponse, CourseDocumentListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse
-from app.services.course_service import list_course_documents, list_course_knowledge_chunks, delete_course_document, create_course_chapter, list_course_chapters, create_knowledge_point, list_knowledge_points, list_vector_index_records, link_course_document_to_chapter_and_knowledge_point, reindex_course_document
+from app.schemas.course import CourseChapterContentResponse, CourseCreate, CourseResponse, CourseDetailResponse, CourseSyllabusResponse, CourseUploadResponse, CourseDocumentListResponse, CourseDocumentAssetListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse
+from app.services.course_service import archive_course, get_course_chapter_content, list_course_documents, get_course_document_assets, list_course_knowledge_chunks, delete_course_document, create_course_chapter, list_course_chapters, create_knowledge_point, list_knowledge_points, list_vector_index_records, link_course_document_to_chapter_and_knowledge_point, reindex_course_document
 from app.services.course_syllabus_service import get_course_syllabus
 from app.services.course_structure_service import generate_course_structure_draft, get_course_structure_draft, update_course_structure_draft, confirm_course_structure_draft
 from app.services.rag_service import upload_and_index_course_document
@@ -258,6 +256,26 @@ def get_course_documents(
 
 
 @router.get(
+    "/{course_id}/documents/{document_id}/assets",
+    response_model=ApiResponse[CourseDocumentAssetListResponse],
+)
+def get_document_assets(
+    course_id: str,
+    document_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
+):
+    """获取上传文档提取出的图片及公开访问 URL。"""
+    return success(
+        get_course_document_assets(
+            db=db,
+            course_id=course_id,
+            document_id=document_id,
+        )
+    )
+
+
+@router.get(
     "/{course_id}/chunks",
     response_model=ApiResponse[CourseKnowledgeChunkListResponse],
 )
@@ -408,6 +426,7 @@ def update_structure_draft(
 @router.post(
     "/{course_id}/structure-drafts/{draft_id}/confirm",
     response_model=ApiResponse[CourseStructureConfirmResponse],
+    include_in_schema=False,
 )
 def confirm_structure_draft(
     course_id: str,

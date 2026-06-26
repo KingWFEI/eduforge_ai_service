@@ -107,6 +107,7 @@ class AgentTask(Base):
     course_id = Column(String(64), index=True, nullable=True)
     status = Column(String(30), nullable=False, index=True)
     progress = Column(Integer, default=0)
+    current_step = Column(String(200), nullable=True)
     input_json = Column(JSON, nullable=True)
     output_json = Column(JSON, nullable=True)
     error_message = Column(Text, nullable=True)

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.constants.role import Role
@@ -16,10 +17,12 @@ from app.services.agent_task_service import (
     list_agent_tasks,
     retry_agent_task,
 )
+from app.services.course_content_generation_service import get_content_generation_task_status
 from app.services.resource_generation_graph_service import run_resource_generation_graph
 from app.utils.response import ApiResponse, success
 
 router = APIRouter(prefix="/agent-tasks", tags=["智能体任务监控"])
+task_alias_router = APIRouter(prefix="/tasks", tags=["智能体任务监控"])
 
 
 @router.get("", response_model=ApiResponse[AgentTaskListResponse])
@@ -48,6 +51,30 @@ def agent_task_detail(
     current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
 ):
     data = get_agent_task_detail(db=db, task_id=task_id)
+    return success(data)
+
+
+@task_alias_router.get("/{task_id}", response_model=ApiResponse[dict])
+def task_detail_alias(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+):
+    task = db.execute(
+        text(
+            """
+            SELECT task_type
+            FROM agent_tasks
+            WHERE id = :task_id
+            LIMIT 1
+            """
+        ),
+        {"task_id": task_id},
+    ).mappings().first()
+    if task and task["task_type"] == "course_content_generate":
+        data = get_content_generation_task_status(db=db, task_id=task_id)
+    else:
+        data = get_agent_task_detail(db=db, task_id=task_id)
     return success(data)
 
 

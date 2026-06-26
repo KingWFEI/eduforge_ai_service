@@ -114,6 +114,15 @@ class CourseFileResponse(BaseModel):
         from_attributes = True
 
 
+class DocumentAssetItem(BaseModel):
+    filename: str
+    url: str
+    asset_type: str
+    page_no: Optional[int] = None
+    slide_no: Optional[int] = None
+    alt: str = "文档插图"
+
+
 class CourseUploadResponse(BaseModel):
     document_id: str = Field(..., description="文档ID")
     course_id: str = Field(..., description="课程ID")
@@ -121,6 +130,8 @@ class CourseUploadResponse(BaseModel):
     chunk_count: int = Field(..., description="知识块数量")
     parse_status: str = Field(..., description="解析状态")
     index_status: str = Field(..., description="索引状态")
+    asset_count: int = Field(0, description="提取的图片数量")
+    assets: List[DocumentAssetItem] = Field(default_factory=list, description="文档图片")
     structure_draft: Optional[dict[str, Any]] = Field(None, description="课程结构草稿")
 
 
@@ -140,12 +151,21 @@ class CourseDocumentItem(BaseModel):
     uploaded_by: Optional[str] = Field(None, description="上传人")
     uploaded_at: Optional[str] = Field(None, description="上传时间")
     updated_at: Optional[str] = Field(None, description="更新时间")
+    assets: List[DocumentAssetItem] = Field(default_factory=list, description="文档图片")
 
 
 class CourseDocumentListResponse(BaseModel):
     course_id: str = Field(..., description="课程ID")
     total: int = Field(..., description="文档总数")
     items: List[CourseDocumentItem] = Field(default_factory=list, description="文档列表")
+
+
+class CourseDocumentAssetListResponse(BaseModel):
+    course_id: str
+    document_id: str
+    filename: str
+    total: int
+    items: List[DocumentAssetItem] = Field(default_factory=list)
 
 
 class DeleteCourseDocumentResponse(BaseModel):
@@ -172,6 +192,7 @@ class CourseKnowledgeChunkItem(BaseModel):
     page: Optional[int] = Field(None, description="页码")
     chunk_index: int = Field(..., description="知识块序号")
     indexed: bool = Field(..., description="是否已索引")
+    images: List[str] = Field(default_factory=list, description="知识块关联图片URL")
 
 
 class CourseKnowledgeChunkListResponse(BaseModel):
@@ -229,6 +250,7 @@ class CourseChapterContentChunk(BaseModel):
     section: Optional[str] = Field(None, description="片段标题")
     content: str = Field(..., description="片段内容")
     chunk_index: int = Field(..., description="片段序号")
+    images: List[str] = Field(default_factory=list, description="片段关联图片URL")
 
 
 class CourseChapterContentSource(BaseModel):
