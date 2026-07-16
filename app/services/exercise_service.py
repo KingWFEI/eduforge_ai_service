@@ -10,6 +10,9 @@ from app.models.user import User
 from app.utils.response import AppException, ErrorCode
 
 
+ALLOWED_EXERCISE_TYPES = {"choice", "multi_choice", "fill_blank", "true_false"}
+
+
 def get_exercises_by_resource(db: Session, current_user: User, resource_id: str) -> dict:
     student_id = str(current_user.id)
     exercise_set = _get_or_create_exercise_set(db, student_id, resource_id)
@@ -270,7 +273,9 @@ def _get_or_create_exercise_set(db: Session, student_id: str, resource_id: str) 
         )
 
     content = _json_value(resource["content_json"], {})
-    questions = content.get("questions") if isinstance(content, dict) else None
+    questions = None
+    if isinstance(content, dict):
+        questions = content.get("exercises") or content.get("questions")
     if not questions:
         raise AppException(
             code=ErrorCode.NOT_FOUND,
@@ -300,6 +305,7 @@ def _get_or_create_exercise_set(db: Session, student_id: str, resource_id: str) 
         },
     )
     for index, item in enumerate(questions):
+        question_type = _normalize_question_type(item.get("type"))
         question_id = "exq_" + uuid.uuid4().hex[:12]
         db.execute(
             text(
@@ -319,11 +325,11 @@ def _get_or_create_exercise_set(db: Session, student_id: str, resource_id: str) 
             {
                 "id": question_id,
                 "exercise_set_id": set_id,
-                "type": item.get("type") or "single_choice",
-                "question": item.get("question") or "",
-                "options_json": json.dumps(item.get("options"), ensure_ascii=False),
-                "correct_answer_json": json.dumps(item.get("answer") or item.get("correct_answer"), ensure_ascii=False),
-                "explanation": item.get("analysis") or item.get("explanation"),
+                "type": question_type,
+                "question": _normalize_question_text(item.get("question"), question_type),
+                "options_json": json.dumps(_question_payload(item, question_type), ensure_ascii=False),
+                "correct_answer_json": json.dumps(_correct_answer_payload(item, question_type), ensure_ascii=False),
+                "explanation": item.get("explanation") or item.get("analysis"),
                 "related_knowledge": item.get("knowledge_point") or item.get("related_knowledge"),
                 "sort_order": index + 1,
             },
@@ -397,11 +403,14 @@ def _list_questions(db: Session, exercise_set_id: str, include_answer: bool) -> 
             raw_value=row["related_knowledge"],
             fallback=row["set_knowledge_point"] or _knowledge_point_from_title(row["exercise_title"]),
         )
+        question_type = _normalize_question_type(row["type"])
+        options_payload = _json_value(row["options_json"], None)
         item = {
             "question_id": row["id"],
-            "type": row["type"],
-            "question": row["question"],
-            "options": _json_value(row["options_json"], None),
+            "type": question_type,
+            "question": _normalize_question_text(row["question"], question_type),
+            "options": options_payload if question_type in {"choice", "multi_choice"} else None,
+            "blanks": options_payload if question_type == "fill_blank" else None,
             "related_knowledge": related_knowledge,
             "sort_order": row["sort_order"] or 0,
         }
@@ -666,6 +675,67 @@ def _clean_knowledge_text(value: Any) -> str | None:
     if not text_value:
         return None
     return text_value
+
+
+def _normalize_question_type(raw_type: Any) -> str:
+    question_type = str(raw_type or "").strip()
+    aliases = {
+        "single_choice": "choice",
+        "choice": "choice",
+        "multiple_choice": "multi_choice",
+        "multi": "multi_choice",
+        "multi_choice": "multi_choice",
+        "blank": "fill_blank",
+        "fill": "fill_blank",
+        "fill_blank": "fill_blank",
+        "true_false": "true_false",
+        "judgement": "true_false",
+    }
+    question_type = aliases.get(question_type, question_type)
+    if question_type in ALLOWED_EXERCISE_TYPES:
+        return question_type
+    return "fill_blank"
+
+
+def _normalize_question_text(raw_question: Any, question_type: str) -> str:
+    question = str(raw_question or "").strip()
+    if question_type == "fill_blank" and question and "___" not in question:
+        return f"{question}___"
+    return question
+
+
+def _question_payload(item: dict[str, Any], question_type: str) -> Any:
+    if question_type in {"choice", "multi_choice"}:
+        return _normalize_options_payload(item.get("options"))
+    if question_type == "fill_blank":
+        return item.get("blanks")
+    return None
+
+
+def _correct_answer_payload(item: dict[str, Any], question_type: str) -> Any:
+    if question_type == "fill_blank":
+        blanks = item.get("blanks")
+        if isinstance(blanks, list):
+            return [blank.get("answer") for blank in blanks if isinstance(blank, dict)]
+    return item.get("correct_answer") if "correct_answer" in item else item.get("answer")
+
+
+def _normalize_options_payload(options: Any) -> Any:
+    if not isinstance(options, list):
+        return None
+    normalized = []
+    for index, option in enumerate(options):
+        key = chr(ord("A") + index)
+        if isinstance(option, dict):
+            normalized.append(
+                {
+                    "key": str(option.get("key") or key),
+                    "text": str(option.get("text") or option.get("value") or ""),
+                }
+            )
+        else:
+            normalized.append({"key": key, "text": str(option)})
+    return normalized
 
 
 def _looks_like_sentence(value: str) -> bool:

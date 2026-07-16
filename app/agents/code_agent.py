@@ -61,6 +61,7 @@ class CodeAgent(BaseAgent):
 {json.dumps(payload, ensure_ascii=False, indent=2)}
 
 要求：
+0. 除编程语言名称、代码、变量名和必要的专业缩写外，标题、描述、步骤、解释、常见错误和扩展任务必须使用简体中文。
 1. 默认使用 Python，除非知识点明显需要其他语言。
 2. 代码必须完整、可运行，并包含适量注释。
 3. explanation 要解释代码如何体现 knowledge_point。

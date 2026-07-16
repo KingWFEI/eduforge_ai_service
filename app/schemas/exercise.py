@@ -1,13 +1,15 @@
-from typing import Any, List, Optional
+from datetime import datetime
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
 class ExerciseQuestionItem(BaseModel):
     question_id: str
-    type: str
+    type: Literal["choice", "multi_choice", "fill_blank", "true_false"]
     question: str
     options: Optional[Any] = None
+    blanks: Optional[Any] = None
     related_knowledge: Optional[str] = None
     sort_order: int = 0
 
@@ -54,6 +56,42 @@ class ExerciseSubmitResponse(BaseModel):
     weak_points: List[dict[str, Any]] = Field(default_factory=list)
     analysis: dict[str, Any] = Field(default_factory=dict)
     results: List[ExerciseAnswerResult] = Field(default_factory=list)
+
+
+class SectionExerciseAnswerSubmitItem(BaseModel):
+    exercise_id: str
+    type: Literal["choice", "multi_choice", "fill_blank", "true_false"]
+    user_answer: Any
+    is_correct: bool
+
+
+class SectionExerciseSubmitRequest(BaseModel):
+    answers: List[SectionExerciseAnswerSubmitItem] = Field(..., min_length=1)
+
+
+class SectionExerciseSubmitResponse(BaseModel):
+    submit_id: str
+    total: int
+    correct: int
+    incorrect: int
+    score: int
+
+
+class SectionExerciseLatestAnswerItem(BaseModel):
+    exercise_id: str
+    type: Literal["choice", "multi_choice", "fill_blank", "true_false"]
+    user_answer: Any
+    is_correct: bool
+
+
+class SectionExerciseLatestResponse(BaseModel):
+    submit_id: str
+    total: int
+    correct: int
+    incorrect: int
+    score: int
+    answers: List[SectionExerciseLatestAnswerItem] = Field(default_factory=list)
+    submitted_at: datetime
 
 
 class WrongQuestionItem(BaseModel):

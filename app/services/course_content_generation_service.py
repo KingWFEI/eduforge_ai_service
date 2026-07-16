@@ -1249,6 +1249,12 @@ def run_content_generation_task(task_id: str) -> None:
 
 
 def _format_learning_content(row: Any) -> dict[str, Any]:
+    content_json = _json_loads(row["content_json"], None)
+    if isinstance(content_json, dict):
+        content_json = StudentLearningContentAgent.normalize_content_json(
+            content_json,
+            section_id=row["section_id"],
+        )
     return {
         "content_id": row["id"],
         "course_id": row["course_id"],
@@ -1258,7 +1264,7 @@ def _format_learning_content(row: Any) -> dict[str, Any]:
         "title": row["title"],
         "content_type": row["content_type"],
         "content_markdown": row["content_markdown"],
-        "content_json": _json_loads(row["content_json"], None),
+        "content_json": content_json,
         "source_chunk_ids": _json_loads(row["source_chunk_ids"], []),
         "generation_model": row["generation_model"],
         "status": row["status"],

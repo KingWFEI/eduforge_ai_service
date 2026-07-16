@@ -100,6 +100,58 @@ class CourseSyllabusResponse(BaseModel):
     chapters: List[CourseSyllabusChapterItem] = Field(default_factory=list)
 
 
+class CourseSectionCompleteResponse(BaseModel):
+    progress: float = Field(1.0, ge=0.0, le=1.0)
+
+
+class CourseOverviewContinueLearning(BaseModel):
+    chapter_id: Optional[str] = None
+    chapter_name: Optional[str] = None
+    section_id: Optional[str] = None
+    section_name: Optional[str] = None
+    progress: float = Field(0.0, ge=0.0, le=1.0)
+    last_study_time: Optional[datetime] = None
+    estimated_remaining_minutes: int = Field(0, ge=0)
+    section_ids: List[str] = Field(default_factory=list)
+
+
+class CourseOverviewProgress(BaseModel):
+    total_progress: float = Field(0.0, ge=0.0, le=1.0)
+    completed_chapters: int = 0
+    total_chapters: int = 0
+    total_study_hours: float = 0.0
+    streak_days: int = 0
+
+
+class CourseOverviewAiSuggestion(BaseModel):
+    weak_points: List[str] = Field(default_factory=list)
+    suggestion: str = ""
+    next_task: str = ""
+
+
+class CourseOverviewRecentLearningItem(BaseModel):
+    type: str
+    title: str
+    action: str
+    time_ago: str
+    is_incomplete: bool
+
+
+class CourseOverviewRecommendedResource(BaseModel):
+    title: str
+    type: str
+    reason: str
+    estimated_time_minutes: int = Field(ge=0)
+
+
+class CourseOverviewResponse(BaseModel):
+    continue_learning: CourseOverviewContinueLearning
+    progress: CourseOverviewProgress
+    ai_suggestion: CourseOverviewAiSuggestion
+    recent_learning: List[CourseOverviewRecentLearningItem] = Field(default_factory=list)
+    recommended_resources: List[CourseOverviewRecommendedResource] = Field(default_factory=list)
+
+
 class CourseFileResponse(BaseModel):
     """课程文件响应"""
     id: str
@@ -269,6 +321,19 @@ class CourseChapterContentResponse(BaseModel):
     chunk_count: int = Field(0, description="知识块数量")
     sources: List[CourseChapterContentSource] = Field(default_factory=list, description="内容来源文档")
     chunks: List[CourseChapterContentChunk] = Field(default_factory=list, description="原始知识块列表")
+
+
+class SectionRecommendationResourceItem(BaseModel):
+    id: str = Field(..., description="资源唯一标识")
+    title: str = Field(..., description="资源标题")
+    subtitle: str = Field(..., description="资源副标题")
+    type: str = Field(..., description="资源类型：illustration / code_case / exercise / mind_map")
+    reason: Optional[str] = Field(None, description="结合学习内容和用户画像生成的推荐理由")
+
+
+class SectionRecommendationResponse(BaseModel):
+    suggestion: str = Field(..., description="AI 个性化建议文案")
+    resources: List[SectionRecommendationResourceItem] = Field(default_factory=list, description="推荐资源壳子列表")
 
 
 class KnowledgePointCreate(BaseModel):

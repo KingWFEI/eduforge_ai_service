@@ -442,7 +442,144 @@ section_id={section_id}
 
 前端应使用和知识块相同的 Markdown 图片处理逻辑。
 
-## 13. 章节原文内容
+`content_json` 中不再返回 `resources` 和 `supplement_suggestion`。资源推荐请调用独立推荐接口。
+
+## 13. 章节学习资源推荐
+
+章节学习页需要展示 AI 个性化资源推荐时，调用独立接口：
+
+```http
+GET /api/courses/{course_id}/sections/{section_id}/recommendations?chapter_id={chapter_id}
+```
+
+查询参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---:|---|
+| `chapter_id` | string | 否 | 辅助后端获取更完整的章节上下文 |
+| `refresh` | boolean | 否 | 是否强制重新生成推荐，默认 `false` |
+
+后端会按 `(user_id, course_id, section_id)` 缓存推荐结果。首次请求未命中时调用 AI 并写入数据库；后续请求直接返回缓存。传 `refresh=true` 时会重新生成并覆盖缓存。
+
+响应体：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "suggestion": "建议你先通过图解理解指针与内存的关系，再结合代码案例和随堂练习巩固。",
+    "resources": [
+      {
+        "id": "res_sec_001_exercise",
+        "title": "指针与内存管理巩固练习",
+        "subtitle": "通过选择题和填空题检查掌握情况",
+        "type": "exercise"
+      }
+    ]
+  }
+}
+```
+
+资源壳子只包含卡片展示元信息，不包含实际内容。
+
+### 壳子结构
+
+```json
+{
+  "id": "res_sec_001_exercise",
+  "title": "指针与内存管理巩固练习",
+  "subtitle": "通过选择题和填空题检查掌握情况",
+  "type": "exercise"
+}
+```
+
+字段说明：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | string | 资源壳子 ID，点击生成时回传 |
+| `title` | string | 卡片标题 |
+| `subtitle` | string | 卡片副标题 |
+| `type` | string | `illustration` / `code_case` / `exercise` / `mind_map` |
+
+后端固定返回四类资源壳子：`illustration`、`code_case`、`exercise`、`mind_map`。
+
+### 点击生成资源详情
+
+```http
+POST /api/course-structure-drafts/contents/resources/generate
+Content-Type: application/json
+```
+
+请求体：
+
+```json
+{
+  "course_id": "course_123",
+  "section_id": "sec_001",
+  "content_id": "slc_001",
+  "resource_id": "res_sec_001_exercise",
+  "type": "exercise"
+}
+```
+
+`content_id` 可选。不传时，后端使用该小节最新生成的学习内容。
+
+响应体：
+
+```json
+{
+  "code": 0,
+  "message": "资源生成成功",
+  "data": {
+    "resource_id": "res_sec_001_exercise",
+    "title": "指针与内存管理巩固练习",
+    "subtitle": "通过选择题和填空题检查掌握情况",
+    "type": "exercise",
+    "course_id": "course_123",
+    "section_id": "sec_001",
+    "content_id": "slc_001",
+    "knowledge_point_id": "kp_001",
+    "content_text": null,
+    "content_json": {
+      "title": "指针与内存管理巩固练习",
+      "difficulty": "基础",
+      "description": "围绕指针与内存管理生成的练习题",
+      "reason": "用于检测并巩固当前知识点掌握情况",
+      "exercises": [
+        {
+          "id": "ex_ch01_1",
+          "type": "choice",
+          "question": "哪项说法正确？",
+          "options": [{"key": "A", "text": "选项A"}],
+          "correct_answer": "A",
+          "explanation": "解析",
+          "difficulty": "easy"
+        }
+      ]
+    },
+    "source_chunk_ids": ["chunk_001"],
+    "generation_model": null,
+    "source": "小节学习内容同步生成"
+  }
+}
+```
+
+前端渲染建议：
+
+| `type` | 主要内容字段 |
+|---|---|
+| `illustration` | `content_json.overview`、`content_json.scenes[]`、`content_json.key_takeaways[]` |
+| `code_case` | `content_json.language`、`content_json.steps[]`、`content_json.code`、`content_json.explanation` |
+| `exercise` | `content_json.exercises[]`，题型为 `choice` / `multi_choice` / `fill_blank` / `true_false` |
+| `mind_map` | `content_json.tree` |
+
+注意：`GET /api/course-structure-drafts/contents` 中的小节内容会和学习内容一并生成 `content_json.exercises[]`。点击 `type=exercise` 的资源壳子后，本接口返回的是这份已保存练习题，不会再次随机生成。
+
+点击生成对 `illustration`、`code_case`、`mind_map` 仍是实时 AI 调用；`exercise` 是读取已生成内容。前端仍需要给按钮展示 loading 和错误状态。
+
+## 14. 章节原文内容
 
 ### 接口
 
@@ -458,7 +595,7 @@ images: string[];
 
 聚合字段 `content` 也可能直接包含 Markdown 图片。
 
-## 14. 兼容性和旧数据
+## 15. 兼容性和旧数据
 
 旧文档的知识块中没有图片 URL，不会自动更新。
 
@@ -478,7 +615,7 @@ asset_count ?? 0
 
 不要假设所有历史文档都包含图片资源。
 
-## 15. 当前限制
+## 16. 当前限制
 
 1. PPTX 只能直接提取内嵌图片。
 2. 由多个文本框、箭头和形状组合而成的 PPT 图形可能不会作为单张图片提取。
@@ -486,7 +623,7 @@ asset_count ?? 0
 4. 当前功能解决的是图片保存、关联和展示，不包含图片语义理解。
 5. 图片中的公式、流程关系和知识说明需要后续接入 OCR 或视觉模型。
 
-## 16. 推荐前端页面
+## 17. 推荐前端页面
 
 知识库管理页建议增加：
 
@@ -512,7 +649,7 @@ asset_count ?? 0
 - 图片使用懒加载；
 - 加载失败时显示 `alt` 文本和重试按钮。
 
-## 17. 联调检查清单
+## 18. 联调检查清单
 
 - [ ] PPTX 上传响应包含 `asset_count` 和 `assets`
 - [ ] 图片 URL 拼接 API 地址后可返回 `200`
@@ -522,5 +659,8 @@ asset_count ?? 0
 - [ ] 生成草稿包含完整课程目录
 - [ ] 确认结构后图片仍保留
 - [ ] 生成学习内容包含来源插图
+- [ ] 学习内容 `content_json` 不包含 `resources` 和 `supplement_suggestion`
+- [ ] 小节推荐接口返回 `suggestion` 和资源壳子列表
+- [ ] 点击壳子能调用实时生成接口并展示详情
 - [ ] 历史文档没有 `assets/images` 时页面不报错
 - [ ] 图片在移动端不会超出正文容器

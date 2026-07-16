@@ -24,17 +24,32 @@ class DeepSeekService:
     """
 
     def __init__(self) -> None:
-        self.api_key = os.getenv("DEEPSEEK_API_KEY")
-        self.base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        self.api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY")
+        self.base_url = (
+            os.getenv("DEEPSEEK_BASE_URL")
+            or os.getenv("LLM_BASE_URL")
+            or self._base_url_from_completion_url(os.getenv("LLM_API_URL"))
+            or "https://api.deepseek.com"
+        )
+        self.model = os.getenv("DEEPSEEK_MODEL") or os.getenv("LLM_MODEL", "deepseek-chat")
 
         if not self.api_key:
-            raise RuntimeError("缺少 DEEPSEEK_API_KEY，请在 .env 文件中配置")
+            raise RuntimeError("Missing DEEPSEEK_API_KEY or LLM_API_KEY")
 
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
         )
+
+    @staticmethod
+    def _base_url_from_completion_url(completion_url: str | None) -> str | None:
+        if not completion_url:
+            return None
+        suffix = "/chat/completions"
+        normalized = completion_url.rstrip("/")
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
+        return normalized
 
     def _chat_completion_content(
         self,
@@ -213,6 +228,33 @@ class DeepSeekService:
         stream = await asyncio.to_thread(_create_stream)
 
         for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
+    async def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int = 2048,
+        temperature: float = 0.7,
+    ) -> AsyncGenerator[str, None]:
+        """Stream a multi-turn OpenAI-compatible chat completion."""
+
+        def _create_stream():
+            return self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+            )
+
+        stream = iter(await asyncio.to_thread(_create_stream))
+        sentinel = object()
+        while True:
+            chunk = await asyncio.to_thread(lambda: next(stream, sentinel))
+            if chunk is sentinel:
+                break
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta

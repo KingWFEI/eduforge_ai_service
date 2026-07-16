@@ -30,8 +30,10 @@ from app.api.v1 import (
     settings,
     student_learning_style,
     students,
+    tutor,
     users,
 )
+from app.utils.openapi_zh import install_chinese_openapi
 from app.utils.logging_config import setup_logging
 from app.utils.response import AppException, ErrorCode, fail, success
 
@@ -106,8 +108,8 @@ def _http_error_message_and_hint(
 
 # Create FastAPI app
 app = FastAPI(
-    title="FastAPI Demo Backend",
-    description="FastAPI demo backend service",
+    title="EduForge AI 服务接口文档",
+    description="EduForge AI 后端服务接口文档",
     version="0.4.0",
     debug=True
 )
@@ -334,7 +336,6 @@ def health_check():
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(courses.router, prefix="/api")
-app.include_router(courses.v1_router, prefix="/api")
 app.include_router(course_structure_drafts.router, prefix="/api")
 app.include_router(home.router)
 app.include_router(onboarding.router, prefix="/api")
@@ -355,3 +356,6 @@ app.include_router(settings.router, prefix="/api")
 app.include_router(student_learning_style.router, prefix="/api")
 app.include_router(profile_dialogue.router, prefix="/api")
 app.include_router(knowledge.router, prefix="/api")
+app.include_router(tutor.router, prefix="/api")
+
+install_chinese_openapi(app)

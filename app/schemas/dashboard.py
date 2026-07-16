@@ -10,6 +10,7 @@ class DashboardSummaryResponse(BaseModel):
     knowledge_chunk_count: int = 0
     generated_resource_count: int = 0
     today_generation_count: int = 0
+    today_generated_count: int = 0
     average_accuracy: float = 0
     learning_path_completion_rate: float = 0
     agent_task_success_rate: float = 0

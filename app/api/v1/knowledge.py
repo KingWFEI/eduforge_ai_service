@@ -4,9 +4,13 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.knowledge import KnowledgeSearchRequest, KnowledgeSearchResponse, KnowledgeAskRequest, KnowledgeAskResponse
+from app.schemas.knowledge import (
+    KnowledgeAskRequest, KnowledgeAskResponse, KnowledgeSearchRequest,
+    KnowledgeSearchResponse, RelevantDocumentRequest, RelevantDocumentResponse,
+)
 from app.services.rag_service import (
     search_knowledge_chunks,
+    search_relevant_documents,
     ask_knowledge_base,
 )
 from app.utils.response import ApiResponse, success
@@ -30,6 +34,23 @@ def search_knowledge(
         course_id=payload.course_id,
         query=payload.query,
         top_k=payload.top_k,
+        chapter_id=payload.chapter_id,
+        knowledge_point_id=payload.knowledge_point_id,
+    )
+    return success(data)
+
+
+@router.post("/relevant-documents", response_model=ApiResponse[RelevantDocumentResponse])
+def relevant_documents(
+    payload: RelevantDocumentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """返回与查询最相关的 Top 10 文档。"""
+    data = search_relevant_documents(
+        db=db,
+        course_id=payload.course_id,
+        query=payload.query,
         chapter_id=payload.chapter_id,
         knowledge_point_id=payload.knowledge_point_id,
     )

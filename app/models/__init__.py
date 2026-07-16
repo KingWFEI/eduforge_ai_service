@@ -3,7 +3,7 @@ from app.models.user import User,UserOnboardingStatus
 from app.models.verification_code import VerificationCode
 from app.models.login_log import LoginLog
 from app.models.course import Course
-from app.models.course_structure import CourseChapter, KnowledgePoint, CourseDocument, KnowledgeChunk, VectorIndexRecord, CourseStructureDraft, CourseSectionLearningContent
+from app.models.course_structure import CourseChapter, KnowledgePoint, CourseDocument, KnowledgeChunk, VectorIndexRecord, CourseStructureDraft, CourseSectionLearningContent, SectionRecommendation
 from app.models.course_structure import CourseChapter, KnowledgePoint, StudentSectionProgress, CourseDocument, KnowledgeChunk, VectorIndexRecord, CourseStructureDraft
 from app.models.onboarding import OnboardingSurvey, OnboardingQuestion, OnboardingOption, OnboardingSubmission, OnboardingAnswer
 from app.models.student_profile import StudentProfile
@@ -13,11 +13,12 @@ from app.models.profile_analysis import ProfileVersion, ProfileAnalysis
 from app.models.resource_agent import LearningResource, ResourceReference, ResourceFeedback, ResourceFavorite, ResourceReview, ResourceGenerationTask, AgentTask, AgentTaskStep
 from app.models.chat import ChatSession, ChatMessage, ChatMessageSource, ChatFeedback
 from app.models.learning_path import LearningPath, LearningPathTask
-from app.models.exercise import ExerciseSet, ExerciseQuestion, ExerciseSubmission, ExerciseAnswer, WrongQuestion
+from app.models.exercise import ExerciseSet, ExerciseQuestion, ExerciseSubmission, ExerciseAnswer, WrongQuestion, SectionExerciseSubmission, SectionExerciseAnswer
 from app.models.evaluation import EvaluationReport, MasteryRecord, WeakPointRecord
 from app.models.other import StudyRecord, UserNotification, DashboardDailyStat, SystemSetting, PromptTemplate
 from app.models.profile_dialogue_messages import ProfileDialogueMessage
 from app.models.profile_dialogue_sessions import ProfileDialogueSession
+from app.models.tutor import TutorMessage, TutorSession
 from app.models.column_comments import apply_column_comments
 from app.db.base import Base
 
@@ -37,6 +38,8 @@ __all__ = [
     "KnowledgeChunk",
     "VectorIndexRecord",
     "CourseStructureDraft",
+    "CourseSectionLearningContent",
+    "SectionRecommendation",
     "OnboardingSurvey",
     "OnboardingQuestion",
     "OnboardingOption",
@@ -69,6 +72,8 @@ __all__ = [
     "ExerciseSubmission",
     "ExerciseAnswer",
     "WrongQuestion",
+    "SectionExerciseSubmission",
+    "SectionExerciseAnswer",
     "EvaluationReport",
     "MasteryRecord",
     "WeakPointRecord",
@@ -79,4 +84,6 @@ __all__ = [
     "PromptTemplate",
     "ProfileDialogueMessage",
     "ProfileDialogueSession",
+    "TutorSession",
+    "TutorMessage",
 ]

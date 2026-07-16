@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import BigInteger, Column, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -76,3 +76,39 @@ class WrongQuestion(Base):
     last_wrong_at = Column(DateTime(timezone=True), nullable=False)
     mastered = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class SectionExerciseSubmission(Base):
+    """章节学习页随堂练习提交汇总。"""
+
+    __tablename__ = "section_exercise_submissions"
+    __table_args__ = (
+        Index("idx_section_exercise_submissions_user_course_section", "user_id", "course_id", "section_id"),
+    )
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    submit_id = Column(String(64), unique=True, index=True, nullable=False)
+    user_id = Column(String(64), nullable=False)
+    course_id = Column(String(64), ForeignKey("courses.course_id"), nullable=False)
+    section_id = Column(String(64), ForeignKey("course_chapters.id"), nullable=False)
+    total_count = Column(Integer, nullable=False)
+    correct_count = Column(Integer, nullable=False)
+    incorrect_count = Column(Integer, nullable=False)
+    score = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class SectionExerciseAnswer(Base):
+    """章节学习页随堂练习答题明细。"""
+
+    __tablename__ = "section_exercise_answers"
+    __table_args__ = (
+        Index("idx_section_exercise_answers_submit_id", "submit_id"),
+    )
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    submit_id = Column(String(64), nullable=False)
+    exercise_id = Column(String(128), nullable=False)
+    type = Column(String(32), nullable=False)
+    user_answer = Column(JSON, nullable=False)
+    is_correct = Column(Integer, nullable=False)

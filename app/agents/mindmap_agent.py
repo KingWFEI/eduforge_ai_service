@@ -51,6 +51,7 @@ class MindMapAgent(BaseAgent):
 {json.dumps(payload, ensure_ascii=False, indent=2)}
 
 要求：
+0. 标题、描述以及 tree 中所有节点名称必须使用简体中文，必要的专业缩写除外。
 1. tree 必须是嵌套对象，节点字段只使用 title 和 children。
 2. 根节点 title 使用 knowledge_point。
 3. 层级控制在 3 到 4 层，覆盖概念、方法、误区、练习路径。

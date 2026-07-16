@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.constants.role import Role
 from app.models.course import Course
-from app.models.course_structure import CourseDocument, KnowledgeChunk
+from app.models.course_structure import CourseDocument, CourseSectionLearningContent, KnowledgeChunk
 from app.models.evaluation import WeakPointRecord
 from app.models.exercise import ExerciseSubmission
 from app.models.learning_path import LearningPath
@@ -32,17 +32,16 @@ def _round_rate(value: Any) -> float:
 def get_dashboard_summary(db: Session) -> dict[str, Any]:
     total_agent_tasks = db.query(AgentTask).count()
     completed_agent_tasks = db.query(AgentTask).filter(AgentTask.status == "completed").count()
-    today_start = date.today()
+    today_generated_count = _generated_count_since(db, date.today())
 
     return {
         "student_count": db.query(User).filter(User.role == Role.STUDENT.value).count(),
         "course_count": db.query(Course).count(),
         "document_count": db.query(CourseDocument).count(),
         "knowledge_chunk_count": db.query(KnowledgeChunk).filter(KnowledgeChunk.deleted == False).count(),  # noqa: E712
-        "generated_resource_count": db.query(LearningResource).filter(LearningResource.generated_by_task_id.isnot(None)).count(),
-        "today_generation_count": db.query(ResourceGenerationTask)
-        .filter(ResourceGenerationTask.created_at >= today_start)
-        .count(),
+        "generated_resource_count": _total_generated_count(db),
+        "today_generation_count": today_generated_count,
+        "today_generated_count": today_generated_count,
         "average_accuracy": _round_rate(db.query(func.avg(ExerciseSubmission.accuracy)).scalar()),
         "learning_path_completion_rate": _round_rate(db.query(func.avg(LearningPath.progress)).scalar()),
         "agent_task_success_rate": _round_rate(completed_agent_tasks / total_agent_tasks if total_agent_tasks else 0),
@@ -57,14 +56,7 @@ def get_resource_stats(db: Session) -> dict[str, Any]:
         .all()
     )
 
-    start_date = date.today() - timedelta(days=13)
-    daily_rows = (
-        db.query(func.date(LearningResource.created_at), func.count(LearningResource.id))
-        .filter(LearningResource.created_at >= start_date)
-        .group_by(func.date(LearningResource.created_at))
-        .order_by(func.date(LearningResource.created_at).asc())
-        .all()
-    )
+    daily_trend = _daily_generated_trend(db, days=14)
 
     return {
         "type_distribution": [
@@ -75,14 +67,75 @@ def get_resource_stats(db: Session) -> dict[str, Any]:
             }
             for row in type_rows
         ],
-        "daily_trend": [
-            {
-                "date": row[0].isoformat() if hasattr(row[0], "isoformat") else str(row[0]),
-                "count": int(row[1] or 0),
-            }
-            for row in daily_rows
-        ],
+        "daily_trend": daily_trend,
     }
+
+
+def _total_generated_count(db: Session) -> int:
+    resource_count = (
+        db.query(LearningResource)
+        .filter(LearningResource.generated_by_task_id.isnot(None))
+        .count()
+    )
+    content_count = (
+        db.query(CourseSectionLearningContent)
+        .filter(CourseSectionLearningContent.status.in_(["generated", "completed"]))
+        .count()
+    )
+    return int(resource_count + content_count)
+
+
+def _generated_count_since(db: Session, start_date: date) -> int:
+    resource_count = (
+        db.query(LearningResource)
+        .filter(
+            LearningResource.generated_by_task_id.isnot(None),
+            LearningResource.created_at >= start_date,
+        )
+        .count()
+    )
+    content_count = (
+        db.query(CourseSectionLearningContent)
+        .filter(
+            CourseSectionLearningContent.status.in_(["generated", "completed"]),
+            CourseSectionLearningContent.created_at >= start_date,
+        )
+        .count()
+    )
+    return int(resource_count + content_count)
+
+
+def _daily_generated_trend(db: Session, days: int = 14) -> list[dict[str, Any]]:
+    start_date = date.today() - timedelta(days=max(days - 1, 0))
+    counts: dict[str, int] = {
+        (start_date + timedelta(days=offset)).isoformat(): 0
+        for offset in range(days)
+    }
+
+    resource_rows = (
+        db.query(func.date(LearningResource.created_at), func.count(LearningResource.id))
+        .filter(
+            LearningResource.generated_by_task_id.isnot(None),
+            LearningResource.created_at >= start_date,
+        )
+        .group_by(func.date(LearningResource.created_at))
+        .all()
+    )
+    content_rows = (
+        db.query(func.date(CourseSectionLearningContent.created_at), func.count(CourseSectionLearningContent.id))
+        .filter(
+            CourseSectionLearningContent.status.in_(["generated", "completed"]),
+            CourseSectionLearningContent.created_at >= start_date,
+        )
+        .group_by(func.date(CourseSectionLearningContent.created_at))
+        .all()
+    )
+    for row_date, count in [*resource_rows, *content_rows]:
+        key = row_date.isoformat() if hasattr(row_date, "isoformat") else str(row_date)
+        if key in counts:
+            counts[key] += int(count or 0)
+
+    return [{"date": day, "count": count} for day, count in counts.items()]
 
 
 def get_learning_stats(db: Session) -> dict[str, Any]:

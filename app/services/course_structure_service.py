@@ -24,6 +24,13 @@ MAX_STRUCTURE_SOURCE_CHARS_PER_DOCUMENT = 8000
 MAX_FALLBACK_LINES = 80
 MAX_STRUCTURE_RAG_CHUNKS = 16
 MAX_STRUCTURE_RAG_CHARS = 22000
+CONFIRMABLE_DRAFT_STATUSES = {"draft", "draft_generated", "pending_review", "modified", "failed"}
+CONFIRMED_DRAFT_STATUSES = {
+    "confirmed",
+    "content_generating",
+    "content_generated",
+    "content_partially_generated",
+}
 
 
 STRUCTURE_SYSTEM_PROMPT = """
@@ -572,10 +579,10 @@ def update_course_structure_draft(
     draft: dict[str, Any],
 ) -> dict:
     current = get_course_structure_draft(db, course_id, draft_id)
-    if current["status"] != "draft":
+    if current["status"] not in CONFIRMABLE_DRAFT_STATUSES:
         raise AppException(
             code=ErrorCode.CONFLICT,
-            message="只有 draft 状态的课程结构草稿可以编辑",
+            message="只有未确认的课程结构草稿可以编辑",
             status_code=status.HTTP_409_CONFLICT,
         )
     normalized_draft = _normalize_draft(draft)
@@ -714,10 +721,21 @@ def confirm_course_structure_draft(
     rebuild_index: bool = True,
 ) -> dict:
     current = get_course_structure_draft(db, course_id, draft_id)
-    if current["status"] != "draft":
+    if current["status"] in CONFIRMED_DRAFT_STATUSES:
+        return {
+            "draft_id": draft_id,
+            "course_id": course_id,
+            "created_chapters": 0,
+            "created_sections": 0,
+            "created_knowledge_points": 0,
+            "rebuilt_documents": 0,
+            "rebuilt_chunks": 0,
+            "status": current["status"],
+        }
+    if current["status"] not in CONFIRMABLE_DRAFT_STATUSES:
         raise AppException(
             code=ErrorCode.CONFLICT,
-            message="只有 draft 状态的课程结构草稿可以确认",
+            message="只有未确认的课程结构草稿可以确认",
             status_code=status.HTTP_409_CONFLICT,
         )
 

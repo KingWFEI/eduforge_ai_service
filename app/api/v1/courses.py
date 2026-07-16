@@ -7,19 +7,36 @@ from app.db.session import get_db
 from app.models.course import Course
 from app.models.course_structure import CourseChapter, KnowledgePoint
 from app.models.user import User
-from app.schemas.course import CourseChapterContentResponse, CourseCreate, CourseResponse, CourseDetailResponse, CourseSyllabusResponse, CourseUploadResponse, CourseDocumentListResponse, CourseDocumentAssetListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse
+from app.schemas.course import CourseChapterContentResponse, CourseCreate, CourseOverviewResponse, CourseResponse, CourseDetailResponse, CourseSyllabusResponse, CourseSectionCompleteResponse, CourseUploadResponse, CourseDocumentListResponse, CourseDocumentAssetListResponse, DeleteCourseDocumentResponse, CourseKnowledgeChunkListResponse, CourseChapterCreate, CourseChapterCreateResponse, CourseChapterListResponse, KnowledgePointCreateResponse, KnowledgePointCreate, KnowledgePointListResponse, VectorIndexRecordListResponse, LinkCourseDocumentRequest, LinkCourseDocumentResponse, ReindexDocumentResponse, CourseStructureDraftGenerateRequest, CourseStructureDraftUpdateRequest, CourseStructureDraftConfirmRequest, CourseStructureDraftResponse, CourseStructureConfirmResponse, SectionRecommendationResponse
+from app.schemas.course_content import (
+    GenerateCourseSectionResourceRequest,
+    GeneratedSectionResourceDetailResponse,
+    GeneratedSectionResourceListResponse,
+    SectionResourceGenerateResponse,
+)
+from app.schemas.exercise import SectionExerciseLatestResponse, SectionExerciseSubmitRequest, SectionExerciseSubmitResponse
+from app.schemas.resource import MyResourcesResponse
 from app.services.course_service import archive_course, get_course_chapter_content, list_course_documents, get_course_document_assets, list_course_knowledge_chunks, delete_course_document, create_course_chapter, list_course_chapters, create_knowledge_point, list_knowledge_points, list_vector_index_records, link_course_document_to_chapter_and_knowledge_point, reindex_course_document
+from app.services.course_overview_service import get_course_overview
 from app.services.course_syllabus_service import get_course_syllabus
 from app.services.course_structure_service import generate_course_structure_draft, get_course_structure_draft, update_course_structure_draft, confirm_course_structure_draft
 from app.services.rag_service import upload_and_index_course_document
+from app.services.resource_service import list_my_resources
+from app.services.section_exercise_service import get_latest_section_exercise, submit_section_exercise
+from app.services.section_progress_service import complete_section_learning
+from app.services.section_recommendation_service import get_section_recommendations
+from app.services.section_resource_generation_service import (
+    generate_section_resource,
+    get_generated_section_resource,
+    list_generated_section_resources,
+)
 from app.schemas.common import PageResponse
 from app.utils.response import ApiResponse, AppException, ErrorCode, success
 
 router = APIRouter(prefix="/courses", tags=["课程"])
-v1_router = APIRouter(prefix="/v1/courses", tags=["课程"])
 
 
-@v1_router.get(
+@router.get(
     "/{course_id}/syllabus",
     response_model=ApiResponse[CourseSyllabusResponse],
 )
@@ -36,6 +53,51 @@ def get_syllabus(
             student_id=str(current_user.id),
         )
     )
+
+
+@router.get(
+    "/{course_id}/overview",
+    response_model=ApiResponse[CourseOverviewResponse],
+)
+def get_course_overview_tab(
+    course_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """获取课程概览 Tab 数据。"""
+    return success(
+        get_course_overview(
+            db=db,
+            course_id=course_id,
+            student_id=str(current_user.id),
+        )
+    )
+
+
+@router.get(
+    "/{course_id}/resources/my",
+    response_model=ApiResponse[MyResourcesResponse],
+)
+def get_my_course_resources(
+    course_id: str,
+    type: str | None = Query(None, description="资源类型"),
+    difficulty: str | None = Query(None, description="难度"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT)),
+):
+    """获取当前学生在指定课程下的学习资源。"""
+    data = list_my_resources(
+        db=db,
+        current_user=current_user,
+        resource_type=type,
+        difficulty=difficulty,
+        course_id=course_id,
+        page=page,
+        page_size=page_size,
+    )
+    return success(data)
 
 
 @router.post("/", response_model=ApiResponse[CourseResponse], include_in_schema=False)
@@ -491,6 +553,162 @@ def get_chapter_content(
         db=db,
         course_id=course_id,
         chapter_id=chapter_id,
+    )
+    return success(data)
+
+
+@router.get(
+    "/{course_id}/sections/{section_id}/recommendations",
+    response_model=ApiResponse[SectionRecommendationResponse],
+)
+def get_section_resource_recommendations(
+    course_id: str,
+    section_id: str,
+    chapter_id: str | None = Query(None, description="章节 ID，辅助后端获取更完整的知识上下文"),
+    refresh: bool = Query(False, description="是否强制重新生成推荐"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
+):
+    """获取当前小节的 AI 个性化资源推荐。"""
+    data = get_section_recommendations(
+        db=db,
+        current_user=current_user,
+        course_id=course_id,
+        section_id=section_id,
+        chapter_id=chapter_id,
+        refresh=refresh,
+    )
+    return success(data)
+
+
+@router.post(
+    "/{course_id}/sections/{section_id}/resources/generate",
+    response_model=ApiResponse[SectionResourceGenerateResponse],
+)
+def generate_course_section_resource_detail(
+    course_id: str,
+    section_id: str,
+    payload: GenerateCourseSectionResourceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
+):
+    """根据课程小节资源壳子实时生成资源详情。"""
+    data = generate_section_resource(
+        db=db,
+        current_user=current_user,
+        course_id=course_id,
+        section_id=section_id,
+        resource_id=payload.resource_id,
+        resource_type=payload.type,
+        content_id=payload.content_id,
+    )
+    return success(
+        data,
+        message="资源生成成功" if data["generated"] else "智能体判断无需生成资源",
+    )
+
+
+@router.get(
+    "/{course_id}/sections/{section_id}/resources",
+    response_model=ApiResponse[
+        GeneratedSectionResourceDetailResponse | GeneratedSectionResourceListResponse
+    ],
+)
+def get_generated_course_section_resources(
+    course_id: str,
+    section_id: str,
+    resource_id: str | None = Query(
+        None,
+        description="实际资源ID；不传时返回该小节全部已生成资源",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
+):
+    """不传 resource_id 查询资源列表；传 resource_id 查询单个资源详情。"""
+    if resource_id:
+        data = get_generated_section_resource(
+            db=db,
+            current_user=current_user,
+            course_id=course_id,
+            section_id=section_id,
+            resource_id=resource_id,
+        )
+        return success(data)
+
+    items = list_generated_section_resources(
+        db=db,
+        current_user=current_user,
+        course_id=course_id,
+        section_id=section_id,
+    )
+    return success(
+        {
+            "course_id": course_id,
+            "section_id": section_id,
+            "total": len(items),
+            "items": items,
+        }
+    )
+
+
+@router.post(
+    "/{course_id}/sections/{section_id}/exercises/submit",
+    response_model=ApiResponse[SectionExerciseSubmitResponse],
+)
+def submit_section_exercise_answers(
+    course_id: str,
+    section_id: str,
+    payload: SectionExerciseSubmitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT)),
+):
+    """提交章节学习页随堂练习答案。"""
+    data = submit_section_exercise(
+        db=db,
+        current_user=current_user,
+        course_id=course_id,
+        section_id=section_id,
+        payload=payload,
+    )
+    return success(data)
+
+
+@router.get(
+    "/{course_id}/sections/{section_id}/exercises/latest",
+    response_model=ApiResponse[SectionExerciseLatestResponse | None],
+)
+def get_latest_section_exercise_submission(
+    course_id: str,
+    section_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT)),
+):
+    """获取当前学生当前小节最近一次随堂练习提交。"""
+    data = get_latest_section_exercise(
+        db=db,
+        current_user=current_user,
+        course_id=course_id,
+        section_id=section_id,
+    )
+    return success(data)
+
+
+@router.post(
+    "/{course_id}/sections/{section_id}/complete",
+    response_model=ApiResponse[CourseSectionCompleteResponse],
+)
+def complete_course_section(
+    course_id: str,
+    section_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT)),
+):
+    """标记当前学生已完成当前小节学习。"""
+    data = complete_section_learning(
+        db=db,
+        current_user=current_user,
+        course_id=course_id,
+        section_id=section_id,
     )
     return success(data)
 

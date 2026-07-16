@@ -36,7 +36,37 @@ class KnowledgeSearchResponse(BaseModel):
     course_id: str = Field(..., description="课程ID")
     query: str = Field(..., description="检索问题")
     total: int = Field(..., description="返回结果数量")
+    retrieval_accuracy: float = Field(..., ge=0, le=1, description="达到相关性阈值的结果占比")
+    relevance_threshold: float = Field(..., ge=-1, le=1, description="相关性判定阈值")
+    relevant_count: int = Field(..., ge=0, description="达到相关性阈值的结果数")
     items: List[KnowledgeSearchItem] = Field(default_factory=list, description="检索结果")
+
+
+class RelevantDocumentRequest(BaseModel):
+    course_id: str = Field(..., description="课程ID")
+    query: str = Field(..., description="检索问题")
+    chapter_id: str | None = Field(None, description="章节ID，可选")
+    knowledge_point_id: str | None = Field(None, description="知识点ID，可选")
+
+
+class RelevantDocumentItem(BaseModel):
+    document_id: str = Field(..., description="文档ID")
+    filename: str | None = Field(None, description="文档名")
+    best_score: float = Field(..., description="文档最佳知识块相似度")
+    average_score: float = Field(..., description="文档命中知识块平均相似度")
+    matched_chunk_count: int = Field(..., ge=1, description="命中知识块数量")
+    best_chunk_id: str = Field(..., description="最佳命中知识块ID")
+    section: str | None = Field(None, description="最佳命中片段标题")
+    content_preview: str = Field(..., description="最佳命中片段预览")
+
+
+class RelevantDocumentResponse(BaseModel):
+    course_id: str = Field(..., description="课程ID")
+    query: str = Field(..., description="检索问题")
+    total: int = Field(..., ge=0, description="返回文档数，最多10条")
+    retrieval_accuracy: float = Field(..., ge=0, le=1, description="候选知识块中达到阈值的占比")
+    relevance_threshold: float = Field(..., ge=-1, le=1, description="相关性判定阈值")
+    items: List[RelevantDocumentItem] = Field(default_factory=list, description="相关文档")
 
 
 class KnowledgeChunkItem(BaseModel):
@@ -81,5 +111,7 @@ class KnowledgeAskResponse(BaseModel):
     question: str = Field(..., description="用户问题")
     answer: str = Field(..., description="RAG回答")
     references: List[KnowledgeAskReference] = Field(default_factory=list, description="引用来源")
+    retrieval_accuracy: float = Field(..., ge=0, le=1, description="达到相关性阈值的检索结果占比")
+    relevance_threshold: float = Field(..., ge=-1, le=1, description="相关性判定阈值")
     llm_used: bool = Field(..., description="是否调用大模型")
     provider: str = Field(..., description="大模型供应商")

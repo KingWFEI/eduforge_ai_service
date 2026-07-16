@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -94,6 +94,37 @@ class StudentSectionProgress(Base):
         server_default=func.now(),
         onupdate=func.now(),
         comment="更新时间",
+    )
+
+
+class SectionRecommendation(Base):
+    """学生小节 AI 个性化资源推荐缓存。"""
+
+    __tablename__ = "section_recommendations"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "course_id",
+            "section_id",
+            name="uk_user_course_section",
+        ),
+        Index("idx_section_recommendations_user_course", "user_id", "course_id"),
+        Index("idx_section_recommendations_section", "section_id"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(String(64), nullable=False)
+    course_id = Column(String(64), nullable=False)
+    section_id = Column(String(64), nullable=False)
+    chapter_id = Column(String(64), nullable=True)
+    suggestion = Column(Text, nullable=False)
+    resources_json = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
 

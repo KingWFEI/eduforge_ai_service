@@ -12,6 +12,8 @@ from app.models.user import User
 from app.schemas.course import CourseStructureConfirmResponse, CourseStructureDraftConfirmRequest
 from app.schemas.course_content import (
     ContentGenerationTaskStatusResponse,
+    GenerateSectionResourceRequest,
+    SectionResourceGenerateResponse,
     SectionLearningContentListResponse,
     StartContentGenerationTaskResponse,
 )
@@ -25,6 +27,7 @@ from app.services.course_structure_service import (
     confirm_course_structure_draft,
     get_course_structure_draft_by_id,
 )
+from app.services.section_resource_generation_service import generate_section_resource
 from app.utils.response import ApiResponse, success
 from app.utils.sse import sse_event
 
@@ -187,3 +190,32 @@ def get_section_learning_contents(
         section_id=section_id,
     )
     return success(data)
+
+
+@router.post(
+    "/contents/resources/generate",
+    response_model=ApiResponse[SectionResourceGenerateResponse],
+)
+def generate_section_resource_detail(
+    payload: GenerateSectionResourceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
+):
+    """
+    根据章节学习页资源壳子实时生成资源详情。
+
+    前端从 content_json.resources[] 取 resource_id/type，点击“生成”时调用本接口。
+    """
+    data = generate_section_resource(
+        db=db,
+        current_user=current_user,
+        course_id=payload.course_id,
+        section_id=payload.section_id,
+        resource_id=payload.resource_id,
+        resource_type=payload.type,
+        content_id=payload.content_id,
+    )
+    return success(
+        data,
+        message="资源生成成功" if data["generated"] else "智能体判断无需生成资源",
+    )

@@ -27,6 +27,9 @@ _COLLECTION = None
 
 CHROMA_DIR = "chroma_db"
 COLLECTION_NAME = "eduforge_knowledge_chunks"
+RAG_RELEVANCE_THRESHOLD = float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.5"))
+RELEVANT_DOCUMENT_LIMIT = 10
+RELEVANT_DOCUMENT_CANDIDATE_CHUNKS = 50
 EMBEDDING_MODEL_NAME = os.getenv(
     "EMBEDDING_MODEL_NAME",
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
@@ -1218,10 +1221,84 @@ def search_knowledge_chunks(
             }
         )
 
+    relevant_count = sum(1 for item in items if item["score"] >= RAG_RELEVANCE_THRESHOLD)
+    retrieval_accuracy = round(relevant_count / len(items), 4) if items else 0.0
+
     return {
         "course_id": course_id,
         "query": query,
         "total": len(items),
+        "retrieval_accuracy": retrieval_accuracy,
+        "relevance_threshold": RAG_RELEVANCE_THRESHOLD,
+        "relevant_count": relevant_count,
+        "items": items,
+    }
+
+
+def search_relevant_documents(
+    db: Session,
+    course_id: str,
+    query: str,
+    chapter_id: str | None = None,
+    knowledge_point_id: str | None = None,
+) -> dict:
+    """检索并按文档聚合，返回相关度最高的 10 篇文档。"""
+    search_result = search_knowledge_chunks(
+        db=db,
+        course_id=course_id,
+        query=query,
+        top_k=RELEVANT_DOCUMENT_CANDIDATE_CHUNKS,
+        chapter_id=chapter_id,
+        knowledge_point_id=knowledge_point_id,
+    )
+    chunks = search_result["items"]
+    document_ids = sorted({item["document_id"] for item in chunks if item.get("document_id")})
+    filenames: dict[str, str] = {}
+    if document_ids:
+        params = {f"document_id_{index}": value for index, value in enumerate(document_ids)}
+        placeholders = ", ".join(f":{key}" for key in params)
+        rows = db.execute(
+            text(
+                f"""
+                SELECT id, filename FROM course_documents
+                WHERE id IN ({placeholders})
+                  AND COALESCE(status, 'active') <> 'deleted'
+                """
+            ),
+            params,
+        ).mappings().all()
+        filenames = {row["id"]: row["filename"] for row in rows}
+
+    grouped: dict[str, list[dict]] = {}
+    for chunk in chunks:
+        document_id = chunk.get("document_id")
+        if document_id and document_id in filenames:
+            grouped.setdefault(document_id, []).append(chunk)
+
+    items = []
+    for document_id, matches in grouped.items():
+        matches.sort(key=lambda item: item["score"], reverse=True)
+        best = matches[0]
+        content = best.get("content") or ""
+        items.append({
+            "document_id": document_id,
+            "filename": filenames.get(document_id),
+            "best_score": best["score"],
+            "average_score": round(sum(item["score"] for item in matches) / len(matches), 4),
+            "matched_chunk_count": len(matches),
+            "best_chunk_id": best["chunk_id"],
+            "section": best.get("section"),
+            "content_preview": content[:300] + ("..." if len(content) > 300 else ""),
+        })
+
+    items.sort(key=lambda item: (item["best_score"], item["average_score"]), reverse=True)
+    items = items[:RELEVANT_DOCUMENT_LIMIT]
+    return {
+        "course_id": search_result["course_id"],
+        "query": query,
+        "total": len(items),
+        "retrieval_accuracy": search_result["retrieval_accuracy"],
+        "relevance_threshold": search_result["relevance_threshold"],
         "items": items,
     }
 
@@ -1432,6 +1509,8 @@ def ask_knowledge_base(
             "question": question,
             "answer": "当前课程资料中没有检索到足够相关的内容，暂时无法基于知识库回答这个问题。建议教师先上传相关课程资料，或扩大检索范围后重试。",
             "references": [],
+            "retrieval_accuracy": search_result["retrieval_accuracy"],
+            "relevance_threshold": search_result["relevance_threshold"],
             "llm_used": False,
             "provider": "DeepSeek",
         }
@@ -1482,6 +1561,8 @@ def ask_knowledge_base(
             "question": question,
             "answer": answer,
             "references": references,
+            "retrieval_accuracy": search_result["retrieval_accuracy"],
+            "relevance_threshold": search_result["relevance_threshold"],
             "llm_used": True,
             "provider": "llm",
         }
@@ -1501,6 +1582,8 @@ def ask_knowledge_base(
             "question": question,
             "answer": fallback_answer,
             "references": references,
+            "retrieval_accuracy": search_result["retrieval_accuracy"],
+            "relevance_threshold": search_result["relevance_threshold"],
             "llm_used": False,
             "provider": "llm",
         }

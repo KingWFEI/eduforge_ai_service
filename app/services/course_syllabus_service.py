@@ -59,6 +59,11 @@ def get_course_syllabus(
     sections_by_chapter: dict[str, list[CourseChapter]] = defaultdict(list)
     for section in sections:
         sections_by_chapter[section.parent_id].append(section)
+    ordered_sections = [
+        section
+        for chapter in root_chapters
+        for section in sections_by_chapter.get(chapter.id, [])
+    ]
 
     section_ids = [item.id for item in sections]
     progress_by_section = _load_progress(
@@ -68,7 +73,7 @@ def get_course_syllabus(
         section_ids=section_ids,
     )
     current_section_id = _select_current_section_id(
-        sections=sections,
+        sections=ordered_sections,
         progress_by_section=progress_by_section,
     )
     current_chapter_id = (
