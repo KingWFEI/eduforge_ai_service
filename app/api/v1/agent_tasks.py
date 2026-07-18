@@ -6,8 +6,8 @@ from app.constants.role import Role
 from app.core.dependencies import require_role
 from app.db.session import get_db
 from app.models.user import User
+from app.models.resource_agent import ResourceGenerationTask
 from app.schemas.agent_task import (
-    AgentTaskDetailResponse,
     AgentTaskListResponse,
     RetryAgentTaskRequest,
     RetryAgentTaskResponse,
@@ -44,12 +44,35 @@ def agent_task_list(
     return success(data)
 
 
-@router.get("/{task_id}", response_model=ApiResponse[AgentTaskDetailResponse])
+@router.get("/{task_id}", response_model=ApiResponse[dict])
 def agent_task_detail(
     task_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(Role.TEACHER, Role.ADMIN)),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
 ):
+    resource_task = db.get(ResourceGenerationTask, task_id)
+    if resource_task is not None:
+        if current_user.role == Role.STUDENT.value and str(resource_task.student_id) != str(current_user.id):
+            from app.utils.response import AppException, ErrorCode
+            from fastapi import status
+            raise AppException(code=ErrorCode.FORBIDDEN, message="无权访问该任务", status_code=status.HTTP_403_FORBIDDEN)
+        resource_ids = resource_task.result_resource_ids_json or []
+        return success({
+            "task_id": resource_task.id,
+            "task_type": "resource_generate",
+            "status": resource_task.status,
+            "progress": resource_task.progress or 0,
+            "current_step": resource_task.current_step,
+            "resource_id": resource_ids[0] if resource_ids else None,
+            "resource_ids": resource_ids,
+            "error": ({
+                "error_code": resource_task.error_code,
+                "error_message": resource_task.error_message,
+                "failed_step": resource_task.failed_step,
+                "retryable": bool(resource_task.retryable),
+                "retry_count": resource_task.retry_count or 0,
+            } if resource_task.error_message else None),
+        })
     data = get_agent_task_detail(db=db, task_id=task_id)
     return success(data)
 

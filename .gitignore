@@ -17,6 +17,7 @@ logs/
 
 # Uploads
 uploads/
+generated_resources/
 
 # Local vector store and downloaded models
 chroma_db/

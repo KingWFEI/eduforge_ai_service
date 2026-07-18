@@ -316,6 +316,14 @@ def get_resource_detail(db: Session, current_user: User, resource_id: str) -> di
                 reason,
                 content_text,
                 content_json,
+                generation_scope,
+                source_type,
+                generation_mode,
+                external_provider,
+                external_id,
+                file_url,
+                preview_url,
+                review_score,
                 EXISTS (
                     SELECT 1
                     FROM resource_favorites rf
@@ -345,6 +353,15 @@ def get_resource_detail(db: Session, current_user: User, resource_id: str) -> di
             status_code=status.HTTP_404_NOT_FOUND,
         )
 
+    content_json = parse_json_field(row["content_json"], default={})
+    if isinstance(content_json, dict):
+        if content_json.get("current_chapter_tree") is not None:
+            content_json["tree"] = content_json["current_chapter_tree"]
+        visualization = content_json.get("visualization")
+        if isinstance(visualization, dict) and visualization.get("renderer") == "frontend_slides_html":
+            visualization.setdefault("html_url", row["file_url"])
+            visualization.setdefault("cover_url", row["preview_url"])
+
     return {
         "resource_id": row["id"],
         "student_id": str(row["student_id"]) if row["student_id"] is not None else None,
@@ -356,7 +373,18 @@ def get_resource_detail(db: Session, current_user: User, resource_id: str) -> di
         "description": row["description"],
         "reason": row["reason"],
         "content_text": row["content_text"],
-        "content_json": parse_json_field(row["content_json"], default={}),
+        "content_json": content_json,
+        "generation_scope": row["generation_scope"],
+        "source_type": row["source_type"],
+        "generation_mode": row["generation_mode"],
+        "external_provider": row["external_provider"],
+        "external_id": row["external_id"],
+        "file_url": row["file_url"] or (
+            content_json.get("visualization", {}).get("html_url")
+            if isinstance(content_json.get("visualization"), dict) else None
+        ),
+        "preview_url": row["preview_url"],
+        "review_score": row["review_score"],
         "favorite": bool(row["favorite"]),
         "review_status": row["review_status"],
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
@@ -1006,7 +1034,7 @@ def clear_generated_resources(
         )
     )
     deleted_resources = _delete_tmp_resources(db)
-    task_steps_result = db.execute(
+    db.execute(
         text(
             """
             DELETE FROM agent_task_steps

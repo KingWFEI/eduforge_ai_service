@@ -5,7 +5,10 @@ from app.agents.base import BaseAgent
 from app.agents.student_learning_content_agent import StudentLearningContentAgent
 
 
-ALLOWED_SECTION_RESOURCE_TYPES = {"illustration", "code_case", "exercise", "mind_map"}
+from app.constants.resource_generation import SUPPORTED_SECTION_RESOURCE_TYPES
+
+
+ALLOWED_SECTION_RESOURCE_TYPES = {item.value for item in SUPPORTED_SECTION_RESOURCE_TYPES}
 
 
 class SectionResourceRecommendationAgent(BaseAgent):

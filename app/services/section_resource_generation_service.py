@@ -19,9 +19,11 @@ from app.models.user import User
 from app.services.llm_service import DeepSeekService
 from app.services.illustration_render_service import render_python_illustration
 from app.utils.response import AppException, ErrorCode
+from app.constants.resource_generation import SUPPORTED_SECTION_RESOURCE_TYPES
 
 
-SECTION_RESOURCE_TYPES = {"illustration", "code_case", "exercise", "mind_map"}
+SECTION_RESOURCE_TYPES = {item.value for item in SUPPORTED_SECTION_RESOURCE_TYPES}
+LEGACY_INLINE_SECTION_RESOURCE_TYPES = {"illustration", "code_case", "exercise", "mind_map"}
 
 
 def generate_section_resource(
@@ -37,8 +39,14 @@ def generate_section_resource(
     if resource_type not in SECTION_RESOURCE_TYPES:
         raise AppException(
             code=ErrorCode.PARAM_ERROR,
-            message="资源类型仅支持 illustration / code_case / exercise / mind_map",
+            message="不支持该小节资源类型",
             status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    if resource_type not in LEGACY_INLINE_SECTION_RESOURCE_TYPES:
+        raise AppException(
+            code=ErrorCode.CONFLICT,
+            message="document / video / ppt 请使用统一异步入口 POST /api/resources/generate",
+            status_code=status.HTTP_409_CONFLICT,
         )
 
     section = _load_section(db, course_id, section_id)
@@ -102,7 +110,6 @@ def generate_section_resource(
 
     if resource_type == "illustration":
         illustration_result = asyncio.run(IllustrationAgent(llm_service).run(input_data))
-        decision = illustration_result["decision"]
         if not illustration_result["should_generate"]:
             return {"generated": False, "resource_id": None}
         resource = illustration_result["resource"]
@@ -112,7 +119,6 @@ def generate_section_resource(
         resource["content_json"]["visualization"] = rendered
         resource["image_url"] = rendered["image_url"]
     else:
-        decision = None
         resource = _run_resource_agent(llm_service, input_data, resource_type)
         resource["title"] = resource.get("title") or shell["title"]
         resource["description"] = resource.get("description") or shell["subtitle"]

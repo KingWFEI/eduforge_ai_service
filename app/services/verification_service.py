@@ -34,7 +34,7 @@ def create_and_send_code(phone: str, db: Session) -> dict:
     # 将旧验证码标记为已使用（防止堆积）
     db.query(VerificationCode).filter(
         VerificationCode.phone == phone,
-        VerificationCode.is_used == False,
+        VerificationCode.is_used.is_(False),
     ).update({"is_used": True})
 
     # 存入新验证码
@@ -60,14 +60,17 @@ def create_and_send_code(phone: str, db: Session) -> dict:
 def verify_code(phone: str, code: str, db: Session, mark_used: bool = True) -> bool:
     """
     校验验证码。
-    mark_used=True 时校验通过后立即标记为已使用（防止重复使用）。
+    mark_used=True 时校验通过后在当前事务中标记为已使用。
+
+    本函数只 flush、不 commit，由调用方把验证码消耗与注册/登录业务放在
+    同一个事务中，避免后续业务失败时验证码仍被永久消耗。
     """
     record = (
         db.query(VerificationCode)
         .filter(
             VerificationCode.phone == phone,
             VerificationCode.code == code,
-            VerificationCode.is_used == False,
+            VerificationCode.is_used.is_(False),
         )
         .order_by(VerificationCode.created_at.desc())
         .first()
@@ -89,7 +92,8 @@ def verify_code(phone: str, code: str, db: Session, mark_used: bool = True) -> b
 
     if mark_used:
         record.is_used = True
-        db.commit()
+        record.used_at = datetime.utcnow()
+        db.flush()
 
     return True
 

@@ -5,9 +5,11 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.learning_profile import StudentLearningProfile
+from app.models.learning_style_character import LearningStyleCharacter, StudentStyleMatch
 from app.models.profile_analysis import ProfileVersion
 from app.models.profile_dialogue_sessions import ProfileDialogueSession
 from app.models.user import UserOnboardingStatus
@@ -17,9 +19,22 @@ from app.services.profile_dialogue_presenter import (
 )
 from app.services.learning_style_character_service import (
     get_student_learning_style_character,
-    match_and_persist_character,
 )
 from app.utils.response import AppException, ErrorCode
+
+
+PROFILE_TYPE_CODE_ALIASES = {
+    "visual_explorer": "EXPLORER",
+    "code_practitioner": "PRACTITIONER",
+    "exam_sprinter": "EXAM_SPRINTER",
+    "project_challenger": "PROJECT_CHALLENGER",
+    "foundation_builder": "FOUNDATION_BUILDER",
+    "deep_researcher": "DEEP_RESEARCHER",
+    "fragmented_learner": "FRAGMENT_LEARNER",
+    "mistake_fixer": "ERROR_REPAIRER",
+    "case_learner": "CASE_LEARNER",
+    "balanced_grower": "PATH_PLANNER",
+}
 
 
 def _as_list(*values: Any) -> list[Any]:
@@ -124,6 +139,85 @@ def _snapshot(profile: StudentLearningProfile) -> dict[str, Any]:
     }
 
 
+def _persist_preview_character_match(
+    db: Session,
+    *,
+    student_id: str,
+    profile: StudentLearningProfile,
+    preview: dict,
+) -> tuple[LearningStyleCharacter | None, StudentStyleMatch | None]:
+    """将对话预览选中的人物直接固化为最终匹配，不再调用二次匹配。"""
+    selected_code = preview.get("profile_type")
+    if not isinstance(selected_code, str) or not selected_code.strip():
+        return None, None
+
+    normalized_code = selected_code.strip()
+    lookup_code = PROFILE_TYPE_CODE_ALIASES.get(
+        normalized_code.lower(),
+        normalized_code,
+    )
+    character = (
+        db.query(LearningStyleCharacter)
+        .filter(
+            func.lower(LearningStyleCharacter.code) == normalized_code.lower(),
+            LearningStyleCharacter.status == "PUBLISHED",
+        )
+        .first()
+    )
+    if character is None and lookup_code.lower() != normalized_code.lower():
+        character = (
+            db.query(LearningStyleCharacter)
+            .filter(
+                func.lower(LearningStyleCharacter.code) == lookup_code.lower(),
+                LearningStyleCharacter.status == "PUBLISHED",
+            )
+            .first()
+        )
+    if character is None:
+        return None, None
+
+    match = (
+        db.query(StudentStyleMatch)
+        .filter(
+            StudentStyleMatch.student_id == student_id,
+            StudentStyleMatch.profile_id == profile.id,
+        )
+        .first()
+    )
+    if match is None:
+        match = StudentStyleMatch(
+            id=uuid4().hex,
+            student_id=student_id,
+            profile_id=profile.id,
+        )
+        db.add(match)
+
+    confidence = preview.get("confidence", 0.85)
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+        confidence = 0.85
+    reason = preview.get("reason")
+    reason = reason.strip()[:120] if isinstance(reason, str) else ""
+    raw_tags = preview.get("tags")
+    tags: list[str] = []
+    if isinstance(raw_tags, list):
+        for tag in raw_tags:
+            if isinstance(tag, str) and tag.strip() and tag.strip() not in tags:
+                tags.append(tag.strip()[:50])
+            if len(tags) >= 5:
+                break
+
+    match.profile_version = profile.version or 1
+    match.character_id = character.id
+    match.character_version = character.version or 1
+    match.match_score = max(0.0, min(1.0, float(confidence)))
+    match.match_reason = reason
+    match.matched_features = tags
+    match.matching_source = "profile_dialogue"
+    match.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return character, match
+
+
 def confirm_dialogue_profile(
     db: Session,
     *,
@@ -156,6 +250,20 @@ def confirm_dialogue_profile(
             .first()
         )
         if profile is not None:
+            preview = (
+                session.profile_preview_json
+                if isinstance(session.profile_preview_json, dict)
+                else {}
+            )
+            _persist_preview_character_match(
+                db,
+                student_id=student_key,
+                profile=profile,
+                preview=preview,
+            )
+            db.commit()
+            db.refresh(profile)
+            db.refresh(session)
             return _confirmation_response(db, session, profile)
 
     legacy_completed_without_profile = (
@@ -233,10 +341,11 @@ def confirm_dialogue_profile(
     session.last_active_at = datetime.now(timezone.utc)
     db.add(session)
 
-    match_and_persist_character(
+    _persist_preview_character_match(
         db,
         student_id=student_key,
         profile=profile,
+        preview=preview,
     )
     db.commit()
     db.refresh(profile)

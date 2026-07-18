@@ -169,6 +169,7 @@ def login_by_phone(payload: PhoneLoginRequest, db: Session = Depends(get_db)):
     _ensure_active(db_user)
 
     verify_code(payload.phone, payload.verification_code, db)
+    db.commit()
 
     return success(
         _build_token_response(db_user),

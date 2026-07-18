@@ -1,6 +1,8 @@
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.constants.role import Role
@@ -30,6 +32,11 @@ from app.schemas.resource import (
     ResourceViewResponse,
 )
 from app.services.resource_generation_graph_service import run_resource_generation_graph
+from app.services.generated_resource_access_service import (
+    SignedResourceAccess,
+    authorize_resource,
+    resolve_artifact,
+)
 from app.services.resource_service import (
     clear_generated_resources,
     create_resource_regeneration_task,
@@ -47,6 +54,7 @@ from app.services.resource_service import (
 from app.utils.response import ApiResponse, AppException, ErrorCode, success
 
 router = APIRouter(prefix="/resources", tags=["学习资源"])
+generated_router = APIRouter(prefix="/generated-resources", tags=["学习资源"])
 
 
 @router.post("/generate", response_model=ApiResponse[GenerateResourceTaskResponse])
@@ -54,20 +62,28 @@ def generate_resource_task(
     payload: GenerateResourceRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(Role.STUDENT)),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
 ):
     student_id = str(current_user.id)
-    task_id = "task_res_" + uuid.uuid4().hex[:12]
+    task_id = str(uuid.uuid4())
+    resource_types = [payload.resource_type.value] if payload.resource_type else list(payload.resource_types)
+    resource_types = ["video" if item == "video_script" else item for item in resource_types]
 
     task = ResourceGenerationTask(
         id=task_id,
         student_id=student_id,
         course_id=payload.course_id,
+        chapter_id=payload.chapter_id,
+        section_id=payload.section_id,
+        resource_type=payload.resource_type.value if payload.resource_type else None,
+        generation_scope=payload.generation_scope.value,
+        knowledge_point_ids_json=payload.knowledge_point_ids,
+        user_request=payload.user_request,
         knowledge_point=payload.knowledge_point,
-        goal=payload.goal,
-        resource_types_json=payload.resource_types,
+        goal=payload.goal or payload.user_request,
+        resource_types_json=resource_types,
         difficulty=payload.difficulty,
-        status="pending",
+        status="queued",
         progress=0,
         current_step="任务已进入队列",
     )
@@ -79,7 +95,7 @@ def generate_resource_task(
     return success(
         GenerateResourceTaskResponse(
             task_id=task_id,
-            status="pending",
+            status="queued",
             progress=0,
             message="资源生成任务已创建，正在后台执行",
         ),
@@ -144,8 +160,57 @@ def get_resource_generation_task(
             agent_task_id=agent_task_id,
             steps=steps,
             error_message=task.error_message,
+            error_code=task.error_code,
+            failed_step=task.failed_step,
+            retryable=bool(task.retryable),
+            retry_count=task.retry_count or 0,
         )
     )
+
+
+@router.get("/{resource_id}/html-entry", response_model=ApiResponse[dict])
+def get_html_entry(
+    resource_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
+):
+    resource = authorize_resource(db, current_user, resource_id)
+    if resource.generation_mode != "interactive_html_slides":
+        raise AppException(code=ErrorCode.PARAM_ERROR, message="该资源不是 HTML 互动课件", status_code=status.HTTP_400_BAD_REQUEST)
+    token, expires_at = SignedResourceAccess.issue(resource_id)
+    return success({
+        "resource_id": resource_id,
+        "html_url": f"/api/generated-resources/{token}/index.html",
+        "cover_url": f"/api/generated-resources/{token}/cover.png",
+        "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(),
+    })
+
+
+@router.get("/{resource_id}/preview")
+def get_resource_preview(
+    resource_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(Role.STUDENT, Role.TEACHER, Role.ADMIN)),
+):
+    authorize_resource(db, current_user, resource_id)
+    path = resolve_artifact(db, resource_id, "cover.png")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
+
+@generated_router.get("/{token}/{asset_path:path}")
+def get_signed_generated_resource(token: str, asset_path: str, db: Session = Depends(get_db)):
+    resource_id = SignedResourceAccess.verify(token)
+    path = resolve_artifact(db, resource_id, asset_path)
+    media_type = "text/html; charset=utf-8" if path.suffix.lower() == ".html" else None
+    headers = {
+        "Cache-Control": "private, no-store",
+        "Content-Security-Policy": (
+            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: 'self'; "
+            "connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+        ),
+        "X-Content-Type-Options": "nosniff",
+    }
+    return FileResponse(path, media_type=media_type, headers=headers)
 
 
 @router.get("/recommend", response_model=ApiResponse[RecommendedResourcesResponse])

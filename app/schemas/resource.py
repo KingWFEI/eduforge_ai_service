@@ -1,6 +1,8 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from app.constants.resource_generation import GenerationScope, ResourceType, validate_resource_scope
 
 
 class RecommendedResourceItem(BaseModel):
@@ -52,6 +54,14 @@ class ResourceDetailResponse(BaseModel):
 
     content_text: Optional[str] = Field(None, description="资源正文")
     content_json: Optional[dict] = Field(None, description="结构化内容")
+    generation_scope: Optional[str] = None
+    source_type: Optional[str] = None
+    generation_mode: Optional[str] = None
+    external_provider: Optional[str] = None
+    external_id: Optional[str] = None
+    file_url: Optional[str] = None
+    preview_url: Optional[str] = None
+    review_score: Optional[float] = None
 
     favorite: bool = Field(False, description="是否已收藏")
     review_status: Optional[str] = Field(None, description="审核状态")
@@ -107,19 +117,49 @@ class ResourceViewResponse(BaseModel):
 # ─── 阶段 4：资源生成任务 ─────────────────────────────
 
 class GenerateResourceRequest(BaseModel):
+    """统一资源生成请求；旧版多资源请求字段继续兼容。"""
+
     course_id: str = Field(..., description="课程 ID")
-    knowledge_point: str = Field(..., description="知识点名称")
-    goal: str = Field(..., description="学习目标")
-    resource_types: List[str] = Field(..., description="资源类型：document / mind_map / exercise / code_case / video_script")
+    chapter_id: Optional[str] = Field(None, description="章节 ID")
+    section_id: Optional[str] = Field(None, description="小节 ID")
+    knowledge_point_ids: List[str] = Field(default_factory=list, description="知识点 ID 列表")
+    resource_type: Optional[ResourceType] = Field(None, description="单一资源类型")
+    user_request: Optional[str] = Field(None, max_length=2000, description="用户补充需求")
+    generation_scope: GenerationScope = Field(GenerationScope.SECTION, description="生成范围")
+
+    # Legacy request fields.
+    knowledge_point: Optional[str] = Field(None, description="旧版知识点名称")
+    goal: Optional[str] = Field(None, description="旧版学习目标")
+    resource_types: List[str] = Field(default_factory=list, description="旧版资源类型列表")
     difficulty: str = Field("基础", description="难度：基础 / 中等 / 提高")
     use_profile: bool = Field(True, description="是否结合学生画像")
+
+    @model_validator(mode="after")
+    def validate_request(self):
+        selected = [self.resource_type.value] if self.resource_type else list(self.resource_types)
+        if not selected:
+            raise ValueError("resource_type 不能为空")
+        selected = ["video" if item == "video_script" else item for item in selected]
+        if self.resource_type is None:
+            self.resource_types = selected
+        for item in selected:
+            validate_resource_scope(item, self.generation_scope.value)
+        if self.generation_scope == GenerationScope.SECTION and not self.section_id:
+            # Legacy clients did not send section_id, so only enforce it for the new single-type contract.
+            if self.resource_type is not None:
+                raise ValueError("section scope 必须提供 section_id")
+        if self.generation_scope in {GenerationScope.SECTION, GenerationScope.CHAPTER} and not self.chapter_id:
+            # A section can be resolved to its parent chapter by the service.
+            if self.generation_scope == GenerationScope.CHAPTER:
+                raise ValueError("chapter scope 必须提供 chapter_id")
+        return self
 
 
 class GenerateResourceTaskResponse(BaseModel):
     task_id: str = Field(..., description="资源生成任务 ID")
     status: str = Field(..., description="任务状态")
     progress: int = Field(..., description="任务进度")
-    message: str = Field(..., description="提示信息")
+    message: str = Field("任务已进入队列", description="提示信息")
 
 
 class ResourceTaskStepItem(BaseModel):
@@ -186,3 +226,7 @@ class ResourceTaskDetailResponse(BaseModel):
     agent_task_id: Optional[str] = Field(None, description="智能体任务 ID")
     steps: List[ResourceTaskStepItem] = Field(default_factory=list, description="智能体执行步骤")
     error_message: Optional[str] = Field(None, description="错误信息")
+    error_code: Optional[str] = None
+    failed_step: Optional[str] = None
+    retryable: bool = False
+    retry_count: int = 0

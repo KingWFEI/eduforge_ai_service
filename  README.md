@@ -39,3 +39,6 @@ design_resources：调用 ResourceDesignerAgent 让 DeepSeek 生成资源设计�
 generate_document / generate_mind_map / generate_exercise / generate_code_case / generate_video_script： 这些节点根据 resource_types 判断是否生成对应资源。
 safety_review：把前面生成的资源交给SafetyAgent做安全和幻觉风险审核。
 save_resources：优先保存reviewed_resources，没有的话保存generated_resources，逐条写入LearningResource表。
+
+个性化资源生成 v2（HTML 互动课件、公开视频推荐、课程关系导图、异步状态与迁移）参见
+`docs/resource-generation-v2.md`。

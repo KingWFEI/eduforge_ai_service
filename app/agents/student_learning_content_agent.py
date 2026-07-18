@@ -4,7 +4,10 @@ from typing import Any, Dict
 from app.agents.base import BaseAgent
 
 
-SECTION_RESOURCE_TYPES = ("illustration", "code_case", "exercise", "mind_map")
+from app.constants.resource_generation import DEFAULT_SECTION_RESOURCE_SHELL_TYPES
+
+
+SECTION_RESOURCE_TYPES = tuple(item.value for item in DEFAULT_SECTION_RESOURCE_SHELL_TYPES)
 EXERCISE_TYPES = ("choice", "multi_choice", "fill_blank", "true_false")
 DIFFICULTIES = {"基础": "easy", "中等": "medium", "提高": "hard", "easy": "easy", "medium": "medium", "hard": "hard"}
 
