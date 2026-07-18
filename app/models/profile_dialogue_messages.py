@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, JSON
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, JSON, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -8,6 +8,13 @@ class ProfileDialogueMessage(Base):
     """学习画像对话消息表"""
 
     __tablename__ = "profile_dialogue_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "client_message_id",
+            name="uq_profile_dialogue_message_client_id",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
 
@@ -29,6 +36,9 @@ class ProfileDialogueMessage(Base):
     role = Column(String(20), nullable=False)
 
     content = Column(Text, nullable=False)
+
+    # 前端生成的请求幂等 ID；仅用户消息需要填写
+    client_message_id = Column(String(64), nullable=True)
 
     # 本轮对话发生时的 slot
     slot = Column(String(50), nullable=True)

@@ -32,6 +32,9 @@ class ProfileDialogueSession(Base):
     # 已抽取出的画像字段
     extracted_fields_json = Column(JSON, default=dict, nullable=False)
 
+    # 字段追问次数、跳过字段、最后提问字段等确定性对话状态
+    dialogue_state = Column(JSON, default=dict, nullable=False)
+
     # 画像预览，ready_to_confirm 后生成
     profile_preview_json = Column(JSON, nullable=True)
 
@@ -39,7 +42,7 @@ class ProfileDialogueSession(Base):
     progress = Column(Float, default=0.0, nullable=False)
 
     # 最终生成的 profile_id
-    profile_id = Column(Integer, nullable=True)
+    profile_id = Column(String(64), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

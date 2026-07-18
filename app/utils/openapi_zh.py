@@ -42,6 +42,8 @@ SUMMARY_TRANSLATIONS = {
     ("POST", "/api/auth/login-code"): "发送登录验证码",
     ("POST", "/api/auth/login/phone"): "手机号验证码登录",
     ("GET", "/api/auth/me"): "获取当前登录用户",
+    ("PUT", "/api/auth/me"): "修改个人基本信息",
+    ("POST", "/api/auth/me/avatar"): "上传并更新头像",
     ("POST", "/api/auth/logout"): "退出登录",
     ("POST", "/api/users/"): "创建用户",
     ("GET", "/api/users/"): "获取用户列表",

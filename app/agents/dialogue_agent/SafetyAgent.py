@@ -10,7 +10,7 @@ class SafetyAgent(BaseAgent):
 
     async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         prompt = self._build_prompt(input_data)
-        return await self.llm_service.generate_json(prompt)
+        return await self.llm_service.generate_json(prompt, temperature=0.0)
 
     def _build_prompt(self, input_data: Dict[str, Any]) -> str:
         return f"""

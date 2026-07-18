@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.constants.role import Role
 
@@ -43,6 +45,35 @@ class AdminUserCreate(UserCreate):
 class UserRoleUpdate(BaseModel):
     """用户角色更新请求"""
     role: Role
+
+
+class UserProfileUpdate(BaseModel):
+    """当前用户可修改的基本信息。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=2, max_length=30, description="姓名")
+    phone: str = Field(..., pattern=r"^1[3-9]\d{9}$", description="中国大陆手机号")
+    email: str = Field(default="", max_length=100, description="邮箱，允许为空字符串")
+
+    @field_validator("name", "phone", mode="before")
+    @classmethod
+    def strip_required_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value):
+        if value is None:
+            return ""
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        if value and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+            raise ValueError("邮箱格式不正确")
+        return value
 
 
 class UserResponse(BaseModel):

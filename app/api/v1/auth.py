@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
@@ -18,7 +18,12 @@ from app.schemas.user import (
     SendCodeRequest,
     SendCodeResponse,
     TokenResponse,
+    UserProfileUpdate,
     UserResponse,
+)
+from app.services.account_service import (
+    update_current_user_avatar,
+    update_current_user_profile,
 )
 from app.services.verification_service import create_and_send_code, verify_code
 from app.utils.response import ApiResponse, AppException, ErrorCode, success
@@ -176,6 +181,30 @@ def login_by_phone(payload: PhoneLoginRequest, db: Session = Depends(get_db)):
 def get_me(current_user: User = Depends(get_current_user)):
     """获取当前登录用户信息"""
     return success(user_to_response(current_user))
+
+
+@router.put("/me", response_model=ApiResponse[UserResponse])
+def update_me(
+    payload: UserProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """修改当前登录用户的基本信息。"""
+    return success(update_current_user_profile(db, current_user, payload))
+
+
+@router.post("/me/avatar", response_model=ApiResponse[UserResponse])
+async def update_me_avatar(
+    file: UploadFile = File(..., description="JPEG、PNG 或 WebP 图片，最大 5MB"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """上传头像并立即更新当前登录用户。"""
+    try:
+        user = await update_current_user_avatar(db, current_user, file)
+        return success(user)
+    finally:
+        await file.close()
 
 
 @router.post("/logout", response_model=ApiResponse[bool])

@@ -21,6 +21,11 @@ from app.constants.profile_dialogue import PROFILE_DIALOGUE_SLOT_ORDER
 
 from app.services.llm_service import DeepSeekService
 from app.services.profile_dialogue_orchestrator import ProfileDialogueOrchestrator
+from app.services.profile_dialogue_presenter import (
+    build_profile_dialogue_display,
+    normalize_profile_dialogue_fields,
+)
+from app.services.profile_dialogue_profile_service import confirm_dialogue_profile
 
 from fastapi import Request
 
@@ -47,6 +52,16 @@ def create_profile_dialogue_session(
         collected_slots_json=[],
         missing_slots_json=PROFILE_DIALOGUE_SLOT_ORDER,
         extracted_fields_json={},
+        dialogue_state={
+            "asked_fields": {
+                "learning_style.preferred_content_formats": {
+                    "count": 1,
+                    "last_question": opening_message,
+                }
+            },
+            "skipped_fields": [],
+            "last_question_field": "learning_style.preferred_content_formats",
+        },
         progress=0.0,
     )
 
@@ -65,6 +80,7 @@ def create_profile_dialogue_session(
     db.add(assistant_msg)
     db.commit()
 
+    extracted_fields = normalize_profile_dialogue_fields(session.extracted_fields_json)
     return success({
         "session_id": session.id,
         "status": session.status,
@@ -72,6 +88,12 @@ def create_profile_dialogue_session(
         "progress": session.progress,
         "opening_message": opening_message,
         "missing_slots": session.missing_slots_json,
+        "extracted_fields": extracted_fields,
+        "display": build_profile_dialogue_display(
+            current_slot=session.current_slot,
+            missing_slots=session.missing_slots_json,
+            extracted_fields=extracted_fields,
+        ),
     })
 
 @router.post("/messages")
@@ -94,6 +116,7 @@ async def send_profile_dialogue_message(
         session_id=payload.session_id,
         student_id=current_user.id,
         user_message=payload.message,
+        client_message_id=payload.client_message_id,
     )
 
     return success(result)
@@ -104,51 +127,13 @@ def confirm_profile_dialogue(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(Role.STUDENT)),
 ):
-    session = (
-        db.query(ProfileDialogueSession)
-        .filter(
-            ProfileDialogueSession.id == session_id,
-            ProfileDialogueSession.student_id == current_user.id,
+    return success(
+        confirm_dialogue_profile(
+            db,
+            session_id=session_id,
+            student_id=current_user.id,
         )
-        .first()
     )
-
-    if session is None:
-        raise AppException(
-            code=ErrorCode.NOT_FOUND,
-            message="画像对话会话不存在",
-            status_code=status.HTTP_404_NOT_FOUND,
-        )
-
-    if session.status != "ready_to_confirm":
-        raise AppException(
-            code=ErrorCode.CONFLICT,
-            message="当前画像还未生成，不能确认保存",
-            status_code=status.HTTP_409_CONFLICT,
-        )
-
-    fields = session.extracted_fields_json or {}
-    preview = session.profile_preview_json or {}
-
-    # TODO:
-    # 这里写入 student_learning_profiles 表
-    # 也可以创建 profile_versions
-    #
-    # profile = StudentLearningProfile(...)
-    # db.add(profile)
-    # db.commit()
-
-    session.status = "completed"
-    db.add(session)
-    db.commit()
-    db.refresh(session)
-
-    return success({
-        "session_id": session.id,
-        "status": session.status,
-        "profile_preview": preview,
-        "profile_fields": fields,
-    })
 
 @router.post("/messages/stream")
 async def stream_profile_dialogue_message(
@@ -169,6 +154,7 @@ async def stream_profile_dialogue_message(
         session_id=payload.session_id,
         student_id=current_user.id,
         user_message=payload.message,
+        client_message_id=payload.client_message_id,
     )
 
     return StreamingResponse(
@@ -418,6 +404,8 @@ async def get_dialogue_session_messages(
         )
 
     # 5. 返回前端需要恢复的完整状态
+    extracted_fields = normalize_profile_dialogue_fields(session.extracted_fields_json)
+    missing_slots = session.missing_slots_json or []
     return success(
         ProfileDialogueSessionMessagesData(
             session_id=session.id,
@@ -425,9 +413,14 @@ async def get_dialogue_session_messages(
             current_slot=session.current_slot or "learning_style",
             progress=session.progress or 0.0,
             messages=message_items,
-            extracted_fields=session.extracted_fields_json or {},
+            extracted_fields=extracted_fields,
             collected_slots=session.collected_slots_json or [],
-            missing_slots=session.missing_slots_json or [],
+            missing_slots=missing_slots,
+            display=build_profile_dialogue_display(
+                current_slot=session.current_slot,
+                missing_slots=missing_slots,
+                extracted_fields=extracted_fields,
+            ),
             profile_preview=session.profile_preview_json,
         )
     )
