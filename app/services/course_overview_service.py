@@ -148,6 +148,29 @@ def _load_progress(
     return {item.section_id: item for item in rows}
 
 
+def calculate_course_total_progress(
+    db: Session,
+    *,
+    course_id: str,
+    student_id: str,
+) -> float:
+    """按概览 Tab 口径计算课程全部小节的平均学习进度。"""
+    syllabus = _load_ordered_syllabus(db, course_id)
+    section_ids = syllabus["section_ids"]
+    if not section_ids:
+        return 0.0
+    progress_by_section = _load_progress(db, course_id, student_id, section_ids)
+    values = [
+        _normalize_progress(
+            progress_by_section[section_id].progress
+            if section_id in progress_by_section
+            else 0.0
+        )
+        for section_id in section_ids
+    ]
+    return round(sum(values) / len(values), 4)
+
+
 def _select_current_section(
     sections: list[CourseChapter],
     progress_by_section: dict[str, StudentSectionProgress],

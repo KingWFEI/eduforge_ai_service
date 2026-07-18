@@ -12,6 +12,7 @@ from app.models.profile_analysis import ProfileAnalysis
 from app.models.learning_profile import StudentLearningProfile
 from app.models.user import UserOnboardingStatus
 from app.services.llm_service import DeepSeekService
+from app.services.learning_style_character_service import match_and_persist_character
 
 logger = logging.getLogger("app.services.profile_analysis")
 
@@ -106,6 +107,12 @@ async def run_profile_analysis(
         profile.confidence_json = profile_data.get("confidence")
         profile.version = (profile.version or 0) + 1
         profile.source = "onboarding"
+        db.flush()
+        match_and_persist_character(
+            db,
+            student_id=student_id,
+            profile=profile,
+        )
         db.commit()
         db.refresh(profile)
 

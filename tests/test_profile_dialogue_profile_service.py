@@ -107,6 +107,7 @@ class ProfileDialogueProfileServiceTests(unittest.TestCase):
         version = self.db.query(ProfileVersion).one()
 
         self.assertEqual(result["profile_id"], profile.id)
+        self.assertEqual(result["learning_style_character"]["status"], "MATCHING")
         self.assertEqual(session.status, "completed")
         self.assertEqual(session.profile_id, profile.id)
         self.assertEqual(profile.student_id, str(self.user.id))
@@ -124,7 +125,7 @@ class ProfileDialogueProfileServiceTests(unittest.TestCase):
             self.db,
             student_id=str(self.user.id),
         )
-        self.assertEqual(character_result["status"], "STYLE_UNAVAILABLE")
+        self.assertEqual(character_result["status"], "MATCHING")
         self.assertFalse(character_result["profile_required"])
 
     def test_confirm_is_idempotent_and_new_session_updates_profile_version(self):

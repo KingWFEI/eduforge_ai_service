@@ -428,62 +428,29 @@ def _build_match_response(
     }
 
 
-def get_student_learning_style_character(db: Session, *, student_id: str) -> dict[str, Any]:
-    profile = (
-        db.query(StudentLearningProfile)
-        .filter(StudentLearningProfile.student_id == student_id)
-        .first()
-    )
-    if profile is None:
-        return {
-            "status": "PROFILE_REQUIRED",
-            "profile_required": True,
-            "character": None,
-            "action": {
-                "type": "CREATE_PROFILE",
-                "route": "/profile/create",
-                "button_text": "生成学习画像",
-            },
-        }
-
-    existing_match = (
-        db.query(StudentStyleMatch)
-        .filter(
-            StudentStyleMatch.student_id == student_id,
-            StudentStyleMatch.profile_id == profile.id,
-        )
-        .order_by(StudentStyleMatch.updated_at.desc())
-        .first()
-    )
-    if (
-        existing_match is not None
-        and existing_match.profile_version == (profile.version or 1)
-        and existing_match.matching_source == "deepseek"
-    ):
-        cached_character = (
-            db.query(LearningStyleCharacter)
-            .filter(
-                LearningStyleCharacter.id == existing_match.character_id,
-                LearningStyleCharacter.status == "PUBLISHED",
-                LearningStyleCharacter.version == existing_match.character_version,
-            )
-            .first()
-        )
-        if cached_character is not None:
-            return _build_match_response(character=cached_character, match=existing_match)
-
+def match_and_persist_character(
+    db: Session,
+    *,
+    student_id: str,
+    profile: StudentLearningProfile,
+) -> StudentStyleMatch | None:
+    """画像生成或更新时匹配一次，并在调用方事务中持久化结果。"""
     characters = (
         db.query(LearningStyleCharacter)
         .filter(LearningStyleCharacter.status == "PUBLISHED")
-        .order_by(LearningStyleCharacter.priority.desc(), LearningStyleCharacter.created_at.desc())
+        .order_by(
+            LearningStyleCharacter.priority.desc(),
+            LearningStyleCharacter.created_at.desc(),
+        )
         .all()
     )
     if not characters:
-        return {
-            "status": "STYLE_UNAVAILABLE",
-            "profile_required": False,
-            "character": None,
-        }
+        logger.info(
+            "learning style match skipped: no published characters | student_id=%s | profile_id=%s",
+            student_id,
+            profile.id,
+        )
+        return None
 
     ranked_candidates = _rule_rank_candidates(profile, characters)
     fallback_score, fallback_character, fallback_features = ranked_candidates[0]
@@ -506,11 +473,22 @@ def get_student_learning_style_character(db: Session, *, student_id: str) -> dic
         match_reason = _build_reason(best_character, matched_features)
         matching_source = "rule_fallback"
 
-    match = existing_match or StudentStyleMatch(
-        id=uuid4().hex,
-        student_id=student_id,
-        profile_id=profile.id,
+    match = (
+        db.query(StudentStyleMatch)
+        .filter(
+            StudentStyleMatch.student_id == student_id,
+            StudentStyleMatch.profile_id == profile.id,
+        )
+        .first()
     )
+    if match is None:
+        match = StudentStyleMatch(
+            id=uuid4().hex,
+            student_id=student_id,
+            profile_id=profile.id,
+        )
+        db.add(match)
+
     match.profile_version = profile.version or 1
     match.character_id = best_character.id
     match.character_version = best_character.version or 1
@@ -519,7 +497,57 @@ def get_student_learning_style_character(db: Session, *, student_id: str) -> dic
     match.matched_features = matched_features
     match.matching_source = matching_source
     match.updated_at = datetime.now(timezone.utc)
-    db.add(match)
-    db.commit()
-    db.refresh(match)
-    return _build_match_response(character=best_character, match=match)
+    db.flush()
+    return match
+
+
+def get_student_learning_style_character(db: Session, *, student_id: str) -> dict[str, Any]:
+    """只读取已持久化的画像人物匹配结果，不在查询链路调用模型。"""
+    profile = (
+        db.query(StudentLearningProfile)
+        .filter(StudentLearningProfile.student_id == student_id)
+        .first()
+    )
+    if profile is None:
+        return {
+            "status": "PROFILE_REQUIRED",
+            "profile_required": True,
+            "character": None,
+            "action": {
+                "type": "CREATE_PROFILE",
+                "route": "/profile/create",
+                "button_text": "生成学习画像",
+            },
+        }
+
+    match = (
+        db.query(StudentStyleMatch)
+        .filter(
+            StudentStyleMatch.student_id == student_id,
+            StudentStyleMatch.profile_id == profile.id,
+        )
+        .order_by(StudentStyleMatch.updated_at.desc())
+        .first()
+    )
+    if match is None or match.profile_version != (profile.version or 1):
+        return {
+            "status": "MATCHING",
+            "profile_required": False,
+            "character": None,
+            "matched_at": None,
+        }
+
+    character = (
+        db.query(LearningStyleCharacter)
+        .filter(LearningStyleCharacter.id == match.character_id)
+        .first()
+    )
+    if character is None:
+        return {
+            "status": "STYLE_UNAVAILABLE",
+            "profile_required": False,
+            "character": None,
+            "matched_at": match.updated_at.isoformat() if match.updated_at else None,
+        }
+
+    return _build_match_response(character=character, match=match)

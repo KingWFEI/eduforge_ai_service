@@ -15,6 +15,10 @@ from app.services.profile_dialogue_presenter import (
     build_profile_dialogue_display,
     normalize_profile_dialogue_fields,
 )
+from app.services.learning_style_character_service import (
+    get_student_learning_style_character,
+    match_and_persist_character,
+)
 from app.utils.response import AppException, ErrorCode
 
 
@@ -152,7 +156,7 @@ def confirm_dialogue_profile(
             .first()
         )
         if profile is not None:
-            return _confirmation_response(session, profile)
+            return _confirmation_response(db, session, profile)
 
     legacy_completed_without_profile = (
         session.status == "completed"
@@ -228,13 +232,20 @@ def confirm_dialogue_profile(
     session.ended_at = datetime.now(timezone.utc)
     session.last_active_at = datetime.now(timezone.utc)
     db.add(session)
+
+    match_and_persist_character(
+        db,
+        student_id=student_key,
+        profile=profile,
+    )
     db.commit()
     db.refresh(profile)
     db.refresh(session)
-    return _confirmation_response(session, profile)
+    return _confirmation_response(db, session, profile)
 
 
 def _confirmation_response(
+    db: Session,
     session: ProfileDialogueSession,
     profile: StudentLearningProfile,
 ) -> dict[str, Any]:
@@ -251,5 +262,9 @@ def _confirmation_response(
             current_slot="confirm",
             missing_slots=[],
             extracted_fields=fields,
+        ),
+        "learning_style_character": get_student_learning_style_character(
+            db,
+            student_id=profile.student_id,
         ),
     }

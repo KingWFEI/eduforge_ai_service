@@ -14,6 +14,7 @@ from app.models.learning_profile import (
 # 如果你的课程模型文件不是 app.models.course，
 # 后面报错时，把这里改成你真实的课程模型导入路径。
 from app.models.course import Course
+from app.services.course_overview_service import calculate_course_total_progress
 
 
 class HomeService:
@@ -340,23 +341,13 @@ class HomeService:
         return "未命名课程"
 
     def _estimate_progress(self, context: StudentLearningContext) -> float:
-        """
-        估算课程进度。
-
-        当前 student_learning_contexts 没有 progress 字段，
-        所以先根据 status 做最小可运行估算。
-
-        后面如果你增加学习记录或学习路径表，
-        再把这里替换成真实进度计算。
-        """
-
-        if context.status == "completed":
-            return 1.0
-
-        if context.status == "active":
+        if not context.course_id:
             return 0.0
-
-        return 0.0
+        return calculate_course_total_progress(
+            self.db,
+            course_id=context.course_id,
+            student_id=context.student_id,
+        )
 
     def _build_today_topic(
         self,
